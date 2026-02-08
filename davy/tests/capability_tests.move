@@ -1,9 +1,9 @@
 /// Davy Protocol — Capability Tests
-/// Covers: init, mint, destroy, transfer, view, and validation.
 #[test_only]
 module davy::capability_tests {
     use sui::test_scenario::{Self as ts};
     use davy::capability::{Self, AdminCap, ExecutorCap, PartialFillCap};
+    use davy::errors;
 
     // ===== Constants =====
 
@@ -12,7 +12,7 @@ module davy::capability_tests {
     const EXECUTOR_2: address = @0xE2;
     const NEW_ADMIN: address = @0xA0;
 
-    // ===== 1. Init — AdminCap created for deployer =====
+    // ===== Tests =====
 
     #[test]
     fun test_admin_cap_created_on_init() {
@@ -22,14 +22,11 @@ module davy::capability_tests {
         };
         scenario.next_tx(ADMIN);
         {
-            // AdminCap should be owned by ADMIN
             let admin_cap = scenario.take_from_sender<AdminCap>();
             scenario.return_to_sender(admin_cap);
         };
         scenario.end();
     }
-
-    // ===== 2. Mint ExecutorCap =====
 
     #[test]
     fun test_mint_executor_cap() {
@@ -51,7 +48,6 @@ module davy::capability_tests {
         scenario.next_tx(EXECUTOR_1);
         {
             let exec_cap = scenario.take_from_sender<ExecutorCap>();
-            // Verify label and minted_by
             assert!(*capability::executor_cap_label(&exec_cap) == b"market_maker_1");
             assert!(capability::executor_cap_minted_by(&exec_cap) == ADMIN);
             scenario.return_to_sender(exec_cap);
@@ -59,10 +55,8 @@ module davy::capability_tests {
         scenario.end();
     }
 
-    // ===== 3. Empty label aborts (300) =====
-
     #[test]
-    #[expected_failure(abort_code = 300)]
+    #[expected_failure(abort_code = errors::EEMPTY_LABEL, location = davy::capability)]
     fun test_mint_executor_cap_empty_label_aborts() {
         let mut scenario = ts::begin(ADMIN);
         {
@@ -73,7 +67,7 @@ module davy::capability_tests {
             let admin_cap = scenario.take_from_sender<AdminCap>();
             capability::mint_executor_cap(
                 &admin_cap,
-                b"",  // empty label → abort 300
+                b"",
                 EXECUTOR_1,
                 scenario.ctx(),
             );
@@ -81,8 +75,6 @@ module davy::capability_tests {
         };
         scenario.end();
     }
-
-    // ===== 4. Destroy ExecutorCap (revocation) =====
 
     #[test]
     fun test_destroy_executor_cap() {
@@ -104,18 +96,14 @@ module davy::capability_tests {
         scenario.next_tx(EXECUTOR_1);
         {
             let exec_cap = scenario.take_from_sender<ExecutorCap>();
-            // Revoke by destroying
             capability::destroy_executor_cap(exec_cap);
         };
-        // Verify the cap no longer exists
         scenario.next_tx(EXECUTOR_1);
         {
             assert!(!ts::has_most_recent_for_sender<ExecutorCap>(&scenario));
         };
         scenario.end();
     }
-
-    // ===== 5. Transfer ExecutorCap =====
 
     #[test]
     fun test_transfer_executor_cap() {
@@ -134,28 +122,23 @@ module davy::capability_tests {
             );
             scenario.return_to_sender(admin_cap);
         };
-        // EXECUTOR_1 transfers to EXECUTOR_2
         scenario.next_tx(EXECUTOR_1);
         {
             let exec_cap = scenario.take_from_sender<ExecutorCap>();
             capability::transfer_executor_cap(exec_cap, EXECUTOR_2);
         };
-        // EXECUTOR_2 should now own it
         scenario.next_tx(EXECUTOR_2);
         {
             let exec_cap = scenario.take_from_sender<ExecutorCap>();
             assert!(*capability::executor_cap_label(&exec_cap) == b"transferable");
             scenario.return_to_sender(exec_cap);
         };
-        // EXECUTOR_1 should no longer have it
         scenario.next_tx(EXECUTOR_1);
         {
             assert!(!ts::has_most_recent_for_sender<ExecutorCap>(&scenario));
         };
         scenario.end();
     }
-
-    // ===== 6. Transfer AdminCap =====
 
     #[test]
     fun test_transfer_admin_cap() {
@@ -168,11 +151,9 @@ module davy::capability_tests {
             let admin_cap = scenario.take_from_sender<AdminCap>();
             capability::transfer_admin_cap(admin_cap, NEW_ADMIN);
         };
-        // NEW_ADMIN should own AdminCap
         scenario.next_tx(NEW_ADMIN);
         {
             let admin_cap = scenario.take_from_sender<AdminCap>();
-            // New admin can mint
             capability::mint_executor_cap(
                 &admin_cap,
                 b"new_admin_mint",
@@ -181,15 +162,12 @@ module davy::capability_tests {
             );
             scenario.return_to_sender(admin_cap);
         };
-        // Old admin should no longer have it
         scenario.next_tx(ADMIN);
         {
             assert!(!ts::has_most_recent_for_sender<AdminCap>(&scenario));
         };
         scenario.end();
     }
-
-    // ===== 7. Mint PartialFillCap =====
 
     #[test]
     fun test_mint_partial_fill_cap() {
@@ -218,10 +196,8 @@ module davy::capability_tests {
         scenario.end();
     }
 
-    // ===== 8. Empty label aborts for PartialFillCap =====
-
     #[test]
-    #[expected_failure(abort_code = 300)]
+    #[expected_failure(abort_code = errors::EEMPTY_LABEL, location = davy::capability)]
     fun test_mint_partial_fill_cap_empty_label_aborts() {
         let mut scenario = ts::begin(ADMIN);
         {
@@ -232,7 +208,7 @@ module davy::capability_tests {
             let admin_cap = scenario.take_from_sender<AdminCap>();
             capability::mint_partial_fill_cap(
                 &admin_cap,
-                b"",  // empty → abort 300
+                b"",
                 EXECUTOR_1,
                 scenario.ctx(),
             );
@@ -240,8 +216,6 @@ module davy::capability_tests {
         };
         scenario.end();
     }
-
-    // ===== 9. Destroy PartialFillCap =====
 
     #[test]
     fun test_destroy_partial_fill_cap() {
@@ -272,8 +246,6 @@ module davy::capability_tests {
         scenario.end();
     }
 
-    // ===== 10. Mint multiple ExecutorCaps =====
-
     #[test]
     fun test_mint_multiple_executor_caps() {
         let mut scenario = ts::begin(ADMIN);
@@ -297,7 +269,6 @@ module davy::capability_tests {
             );
             scenario.return_to_sender(admin_cap);
         };
-        // Both executors should have their caps
         scenario.next_tx(EXECUTOR_1);
         {
             let cap = scenario.take_from_sender<ExecutorCap>();
@@ -312,8 +283,6 @@ module davy::capability_tests {
         };
         scenario.end();
     }
-
-    // ===== 11. Transfer PartialFillCap =====
 
     #[test]
     fun test_transfer_partial_fill_cap() {

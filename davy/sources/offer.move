@@ -1,15 +1,9 @@
 /// Davy Protocol — Offer Module
 /// LiquidityOffer is the core primitive: a discrete on-chain object
 /// that IS the liquidity, with explicit lifecycle and price bounds.
-///
-/// Phase 1: struct, create, withdraw, expire, views
-/// Phase 2: fill_full, fill_partial, atomic settle helpers, price math, dust prevention
 module davy::offer {
-    use sui::object::{Self, UID, ID};
     use sui::coin::{Self, Coin};
     use sui::balance::{Self, Balance};
-    use sui::transfer;
-    use sui::tx_context::{Self, TxContext};
     use sui::clock::Clock;
 
     use davy::errors;
@@ -33,7 +27,7 @@ module davy::offer {
     /// 1e9 — all prices are WantAsset per 1 OfferAsset, scaled by this factor.
     const PRICE_SCALING_FACTOR: u128 = 1_000_000_000;
 
-    // ===== Core Struct (1.4) =====
+    // ===== Core Struct =====
 
     /// A discrete liquidity offer. The object IS the liquidity.
     /// Generic params: OfferAsset (what maker provides), WantAsset (what maker wants).
@@ -64,13 +58,13 @@ module davy::offer {
         maker: address,
     }
 
-    // ===== FillReceipt (2.1) =====
+    // ===== FillReceipt =====
 
     /// Proof-of-fill returned by low-level fill primitives.
-    /// Caller receives the OfferAsset coin and is responsible for routing.
-    /// The payment coin is returned separately for caller to route to maker.
+    /// Caller receives the OfferAsset balance and is responsible for routing.
+    /// Payment coin is returned separately.
     public struct FillReceipt<phantom OfferAsset, phantom WantAsset> {
-        offer_coin: Coin<OfferAsset>,
+        offer_balance: Balance<OfferAsset>,
         fill_amount: u64,
         payment_amount: u64,
         price: u64,
@@ -80,12 +74,13 @@ module davy::offer {
     /// Unpack a FillReceipt. Returns (offer_coin, fill_amount, payment_amount, price, is_full).
     public fun unpack_receipt<OfferAsset, WantAsset>(
         receipt: FillReceipt<OfferAsset, WantAsset>,
+        ctx: &mut TxContext,
     ): (Coin<OfferAsset>, u64, u64, u64, bool) {
-        let FillReceipt { offer_coin, fill_amount, payment_amount, price, is_full } = receipt;
-        (offer_coin, fill_amount, payment_amount, price, is_full)
+        let FillReceipt { offer_balance, fill_amount, payment_amount, price, is_full } = receipt;
+        (coin::from_balance(offer_balance, ctx), fill_amount, payment_amount, price, is_full)
     }
 
-    // ===== create (1.5) =====
+    // ===== create =====
 
     /// Create a new liquidity offer. Escrows OfferAsset into the object.
     /// Caller becomes the maker. Offer is shared for permissionless fills.
@@ -134,7 +129,7 @@ module davy::offer {
             maker,
         };
 
-        let offer_id = object::uid_to_inner(&offer.id);
+        let offer_id = object::id(&offer);
 
         events::emit_offer_created(
             offer_id, maker, offer_amount,
@@ -146,7 +141,7 @@ module davy::offer {
         offer_id
     }
 
-    // ===== withdraw (1.6) =====
+    // ===== withdraw =====
 
     /// Maker withdraws remaining balance. Destroys the offer object.
     /// Allowed when status is Created or PartiallyFilled.
@@ -181,7 +176,7 @@ module davy::offer {
         object::delete(id);
     }
 
-    // ===== expire (1.7) =====
+    // ===== expire =====
 
     /// Permissionless expiry. Anyone can call after expiry time.
     /// Returns remaining balance to maker. Destroys the offer object.
@@ -217,7 +212,7 @@ module davy::offer {
         object::delete(id);
     }
 
-    // ===== Price Helpers (2.6) =====
+    // ===== Price Helpers =====
 
     /// Calculate price: WantAsset per 1 OfferAsset, scaled by 1e9.
     /// Formula: price = (payment_amount * 1e9) / fill_amount
@@ -247,7 +242,7 @@ module davy::offer {
         assert!(price <= max_price, errors::price_too_high());
     }
 
-    // ===== Dust Prevention (2.7) =====
+    // ===== Dust Prevention =====
 
     /// Reject fills that would leave a remainder below min_fill_amount.
     /// Exception: filling to exactly zero is always allowed.
@@ -277,13 +272,10 @@ module davy::offer {
         assert!(now < offer.expiry_timestamp_ms, errors::offer_expired());
     }
 
-    // ===== fill_full — low-level (2.2) =====
+    // ===== fill_full — low-level =====
 
     /// Low-level full fill. Takes entire remaining balance.
     /// Returns FillReceipt (caller routes coins) and the payment coin (for maker).
-    ///
-    /// Validates: status, expiry, price bounds.
-    /// Transitions to Filled.
     public fun fill_full<OfferAsset, WantAsset>(
         offer: &mut LiquidityOffer<OfferAsset, WantAsset>,
         payment: Coin<WantAsset>,
@@ -300,17 +292,14 @@ module davy::offer {
         validate_price_bounds(price, offer.min_price, offer.max_price);
 
         // Extract full balance
-        let offer_coin = coin::from_balance(
-            balance::split(&mut offer.offer_balance, fill_amount),
-            ctx,
-        );
+        let offer_balance = balance::split(&mut offer.offer_balance, fill_amount);
 
         // Update state
         offer.total_filled = offer.total_filled + fill_amount;
         offer.fill_count = offer.fill_count + 1;
         offer.status = STATUS_FILLED;
 
-        let offer_id = object::uid_to_inner(&offer.id);
+        let offer_id = object::id(offer);
         let taker = tx_context::sender(ctx);
 
         events::emit_offer_filled(
@@ -318,7 +307,7 @@ module davy::offer {
         );
 
         let receipt = FillReceipt<OfferAsset, WantAsset> {
-            offer_coin,
+            offer_balance,
             fill_amount,
             payment_amount,
             price,
@@ -328,13 +317,10 @@ module davy::offer {
         (receipt, payment)
     }
 
-    // ===== fill_partial — low-level (2.3) =====
+    // ===== fill_partial — low-level =====
 
     /// Low-level partial fill. Takes `fill_amount` from offer balance.
     /// Returns FillReceipt and the payment coin.
-    ///
-    /// Validates: status, expiry, partial policy, min_fill, dust, price bounds.
-    /// Transitions to PartiallyFilled or Filled.
     public fun fill_partial<OfferAsset, WantAsset>(
         offer: &mut LiquidityOffer<OfferAsset, WantAsset>,
         fill_amount: u64,
@@ -358,10 +344,7 @@ module davy::offer {
         validate_price_bounds(price, offer.min_price, offer.max_price);
 
         // Extract fill_amount from balance
-        let offer_coin = coin::from_balance(
-            balance::split(&mut offer.offer_balance, fill_amount),
-            ctx,
-        );
+        let offer_balance = balance::split(&mut offer.offer_balance, fill_amount);
 
         // Update state
         offer.total_filled = offer.total_filled + fill_amount;
@@ -375,7 +358,7 @@ module davy::offer {
             offer.status = STATUS_PARTIALLY_FILLED;
         };
 
-        let offer_id = object::uid_to_inner(&offer.id);
+        let offer_id = object::id(offer);
         let taker = tx_context::sender(ctx);
 
         events::emit_offer_filled(
@@ -383,7 +366,7 @@ module davy::offer {
         );
 
         let receipt = FillReceipt<OfferAsset, WantAsset> {
-            offer_coin,
+            offer_balance,
             fill_amount,
             payment_amount,
             price,
@@ -393,11 +376,11 @@ module davy::offer {
         (receipt, payment)
     }
 
-    // ===== fill_full_and_settle — atomic (2.4) =====
+    // ===== fill_full_and_settle — atomic =====
 
+    #[allow(lint(self_transfer))]
     /// Atomic full fill + settlement.
     /// Sends OfferAsset to taker, WantAsset (payment) to maker.
-    /// This is the recommended API for direct full fills.
     public fun fill_full_and_settle<OfferAsset, WantAsset>(
         offer: &mut LiquidityOffer<OfferAsset, WantAsset>,
         payment: Coin<WantAsset>,
@@ -408,18 +391,18 @@ module davy::offer {
         let taker = tx_context::sender(ctx);
 
         let (receipt, payment_coin) = fill_full(offer, payment, clock, ctx);
-        let (offer_coin, _fill_amount, _payment_amount, _price, _is_full) = unpack_receipt(receipt);
+        let (offer_coin, _fill_amount, _payment_amount, _price, _is_full) = unpack_receipt(receipt, ctx);
 
         // Settlement: OfferAsset → taker, WantAsset → maker
         transfer::public_transfer(offer_coin, taker);
         transfer::public_transfer(payment_coin, maker);
     }
 
-    // ===== fill_partial_and_settle — atomic (2.5) =====
+    // ===== fill_partial_and_settle — atomic =====
 
+    #[allow(lint(self_transfer))]
     /// Atomic partial fill + settlement.
     /// Sends OfferAsset to taker, WantAsset (payment) to maker.
-    /// This is the recommended API for direct partial fills.
     public fun fill_partial_and_settle<OfferAsset, WantAsset>(
         offer: &mut LiquidityOffer<OfferAsset, WantAsset>,
         fill_amount: u64,
@@ -431,14 +414,14 @@ module davy::offer {
         let taker = tx_context::sender(ctx);
 
         let (receipt, payment_coin) = fill_partial(offer, fill_amount, payment, clock, ctx);
-        let (offer_coin, _fill_amount, _payment_amount, _price, _is_full) = unpack_receipt(receipt);
+        let (offer_coin, _fill_amount, _payment_amount, _price, _is_full) = unpack_receipt(receipt, ctx);
 
         // Settlement: OfferAsset → taker, WantAsset → maker
         transfer::public_transfer(offer_coin, taker);
         transfer::public_transfer(payment_coin, maker);
     }
 
-    // ===== View Functions (1.8) =====
+    // ===== View Functions =====
 
     public fun remaining_amount<OfferAsset, WantAsset>(
         offer: &LiquidityOffer<OfferAsset, WantAsset>,
@@ -512,7 +495,7 @@ module davy::offer {
     public fun offer_id<OfferAsset, WantAsset>(
         offer: &LiquidityOffer<OfferAsset, WantAsset>,
     ): ID {
-        object::uid_to_inner(&offer.id)
+        object::id(offer)
     }
 
     // ===== Status/Policy Accessors =====

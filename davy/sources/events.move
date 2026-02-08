@@ -1,9 +1,7 @@
 /// Davy Protocol — Event Layer
 /// Every state transition emits exactly one event.
-/// Events are the sole indexing mechanism — no object scans needed.
 module davy::events {
     use sui::event;
-    use sui::object::ID;
 
     // ===== Offer Events =====
 
@@ -102,6 +100,24 @@ module davy::events {
 
     public struct PartialFillCapDestroyed has copy, drop {
         cap_id: ID,
+    }
+
+    // ===== Pool Events =====
+
+    public struct PoolCreated has copy, drop {
+        pool_id: ID,
+        creator: address,
+        name: vector<u8>,
+    }
+
+    public struct OfferAddedToPool has copy, drop {
+        pool_id: ID,
+        offer_id: ID,
+    }
+
+    public struct OfferRemovedFromPool has copy, drop {
+        pool_id: ID,
+        offer_id: ID,
     }
 
     // ===== Emitter Functions =====
@@ -243,5 +259,23 @@ module davy::events {
 
     public fun emit_partial_fill_cap_destroyed(cap_id: ID) {
         event::emit(PartialFillCapDestroyed { cap_id });
+    }
+
+    // ===== Pool Emitter Functions =====
+
+    public fun emit_pool_created(
+        pool_id: ID,
+        creator: address,
+        name: vector<u8>,
+    ) {
+        event::emit(PoolCreated { pool_id, creator, name });
+    }
+
+    public fun emit_offer_added_to_pool(pool_id: ID, offer_id: ID) {
+        event::emit(OfferAddedToPool { pool_id, offer_id });
+    }
+
+    public fun emit_offer_removed_from_pool(pool_id: ID, offer_id: ID) {
+        event::emit(OfferRemovedFromPool { pool_id, offer_id });
     }
 }

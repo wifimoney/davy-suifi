@@ -1,18 +1,6 @@
 /// Davy Protocol — Capability System
 /// AdminCap-gated minting of executor and partial-fill capabilities.
-///
-/// Architecture:
-///   AdminCap      — Created once at module publish. Gates all cap minting.
-///   ExecutorCap   — Required for intent execution (Phase 4).
-///   PartialFillCap — Optional extension for gated partial fills (future).
-///
-/// All caps have key + store — transferable via public_transfer or
-/// the convenience transfer functions below.
 module davy::capability {
-    use sui::object::{Self, UID};
-    use sui::tx_context::{Self, TxContext};
-    use sui::transfer;
-    use std::vector;
     use davy::errors;
     use davy::events;
 
@@ -24,7 +12,7 @@ module davy::capability {
         id: UID,
     }
 
-    /// Executor capability — required for intent execution in Phase 4.
+    /// Executor capability — required for intent execution.
     /// Minted by AdminCap holder, transferable, revocable.
     public struct ExecutorCap has key, store {
         id: UID,
@@ -34,7 +22,7 @@ module davy::capability {
         minted_by: address,
     }
 
-    /// Partial fill capability — optional future extension.
+    /// Partial fill capability — optional extension.
     /// Could gate partial fill permissions independently of offer fill_policy.
     public struct PartialFillCap has key, store {
         id: UID,
@@ -47,20 +35,17 @@ module davy::capability {
     // ===== Init =====
 
     /// Module initializer — creates AdminCap and transfers to deployer.
-    /// Called exactly once when the module is published.
     fun init(ctx: &mut TxContext) {
         let admin_cap = AdminCap { id: object::new(ctx) };
         let cap_id = object::id(&admin_cap);
         let owner = tx_context::sender(ctx);
         events::emit_admin_cap_created(cap_id, owner);
-        transfer::transfer(admin_cap, owner);
+        transfer::public_transfer(admin_cap, owner);
     }
 
     // ===== Mint Functions =====
 
     /// Mint a new ExecutorCap and transfer to recipient.
-    /// Requires a reference to AdminCap (caller must own it).
-    /// Aborts with `empty_label` (300) if label is empty.
     public fun mint_executor_cap(
         _admin: &AdminCap,
         label: vector<u8>,
@@ -76,12 +61,10 @@ module davy::capability {
         };
         let cap_id = object::id(&cap);
         events::emit_executor_cap_minted(cap_id, recipient, label, minted_by);
-        transfer::transfer(cap, recipient);
+        transfer::public_transfer(cap, recipient);
     }
 
     /// Mint a new PartialFillCap and transfer to recipient.
-    /// Requires a reference to AdminCap.
-    /// Aborts with `empty_label` (300) if label is empty.
     public fun mint_partial_fill_cap(
         _admin: &AdminCap,
         label: vector<u8>,
@@ -97,13 +80,12 @@ module davy::capability {
         };
         let cap_id = object::id(&cap);
         events::emit_partial_fill_cap_minted(cap_id, recipient, label, minted_by);
-        transfer::transfer(cap, recipient);
+        transfer::public_transfer(cap, recipient);
     }
 
     // ===== Destroy Functions (Revocation) =====
 
     /// Destroy an ExecutorCap — effectively revoking it.
-    /// The cap must be owned by the caller (passed by value).
     public fun destroy_executor_cap(cap: ExecutorCap) {
         let ExecutorCap { id, label: _, minted_by: _ } = cap;
         events::emit_executor_cap_destroyed(object::uid_to_inner(&id));
@@ -121,18 +103,18 @@ module davy::capability {
 
     /// Transfer an ExecutorCap to a new owner.
     public fun transfer_executor_cap(cap: ExecutorCap, recipient: address) {
-        transfer::transfer(cap, recipient);
+        transfer::public_transfer(cap, recipient);
     }
 
     /// Transfer the AdminCap to a new owner.
     /// ⚠️ Use with extreme caution — this hands over minting authority.
     public fun transfer_admin_cap(cap: AdminCap, recipient: address) {
-        transfer::transfer(cap, recipient);
+        transfer::public_transfer(cap, recipient);
     }
 
     /// Transfer a PartialFillCap to a new owner.
     public fun transfer_partial_fill_cap(cap: PartialFillCap, recipient: address) {
-        transfer::transfer(cap, recipient);
+        transfer::public_transfer(cap, recipient);
     }
 
     // ===== View Functions =====
@@ -160,7 +142,6 @@ module davy::capability {
     // ===== Test-Only =====
 
     #[test_only]
-    /// Exposes init() for test scenarios.
     public fun init_for_testing(ctx: &mut TxContext) {
         init(ctx)
     }
