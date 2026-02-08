@@ -1,8 +1,14 @@
 /// Davy Protocol — CoordinationPool Module
-/// Pools are non-authoritative indexes of offer IDs.
-/// They hold NO balances — only references.
-/// Clients must always verify offer state directly.
-/// Stale IDs are expected; pools are discovery aids, not truth sources.
+///
+/// Pools are **non-authoritative indexes** that hold references to offer IDs,
+/// NOT liquidity. They exist for off-chain client convenience.
+///
+/// ## Critical Invariant
+///   Clients MUST verify offer state directly. Pool membership does not
+///   guarantee fillability — stale IDs are expected and normal.
+///
+/// ## Access Control
+///   Creator-only membership management prevents spam/griefing.
 module davy::pool {
     use sui::vec_set::{Self, VecSet};
 
@@ -66,7 +72,7 @@ module davy::pool {
         offer_id: ID,
         ctx: &TxContext,
     ) {
-        assert!(tx_context::sender(ctx) == pool.creator, errors::not_creator());
+        assert!(tx_context::sender(ctx) == pool.creator, errors::not_pool_creator());
         assert!(!vec_set::contains(&pool.offer_ids, &offer_id), errors::offer_already_in_pool());
 
         vec_set::insert(&mut pool.offer_ids, offer_id);
@@ -85,7 +91,7 @@ module davy::pool {
         offer_id: ID,
         ctx: &TxContext,
     ) {
-        assert!(tx_context::sender(ctx) == pool.creator, errors::not_creator());
+        assert!(tx_context::sender(ctx) == pool.creator, errors::not_pool_creator());
         assert!(vec_set::contains(&pool.offer_ids, &offer_id), errors::offer_not_in_pool());
 
         vec_set::remove(&mut pool.offer_ids, &offer_id);

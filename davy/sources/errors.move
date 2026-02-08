@@ -1,5 +1,12 @@
-/// Davy Protocol — Error Layer
-/// Centralized error codes with both constants (for tests) and functions (for logic).
+/// Davy Protocol — Centralized Error Constants
+///
+/// All abort codes in one module for easy auditing and documentation.
+///
+/// ## Ranges
+///   - `1xx` — Offer errors (creation, fills, lifecycle)
+///   - `2xx` — Intent errors (execution, escrow, lifecycle)
+///   - `3xx` — Capability errors (minting)
+///   - `4xx` — Pool errors (membership)
 module davy::errors {
     // ===== Offer Errors (100-199) =====
 
@@ -60,11 +67,37 @@ module davy::errors {
     const EMIN_FILL_EXCEEDS_AMOUNT: u64 = 118;
     public fun min_fill_exceeds_amount(): u64 { EMIN_FILL_EXCEEDS_AMOUNT }
 
-    // ===== Authorization Errors (200-299) =====
-    
-    /// Global authorization failure (previously 402, now 206 for pool tests)
+    // ===== Intent Errors (200-299) =====
+
+    const EINTENT_NOT_PENDING: u64 = 200;
+    public fun intent_not_pending(): u64 { EINTENT_NOT_PENDING }
+
+    const EINTENT_EXPIRED: u64 = 201;
+    public fun intent_expired(): u64 { EINTENT_EXPIRED }
+
+    const ENOT_YET_EXPIRED_INTENT: u64 = 202;
+    public fun not_yet_expired_intent(): u64 { ENOT_YET_EXPIRED_INTENT }
+
+    const EPRICE_MISMATCH: u64 = 203;
+    public fun price_mismatch(): u64 { EPRICE_MISMATCH }
+
+    const EINSUFFICIENT_LIQUIDITY: u64 = 204;
+    public fun insufficient_liquidity(): u64 { EINSUFFICIENT_LIQUIDITY }
+
+    const EINSUFFICIENT_ESCROWED: u64 = 205;
+    public fun insufficient_escrowed(): u64 { EINSUFFICIENT_ESCROWED }
+
     const ENOT_CREATOR: u64 = 206;
     public fun not_creator(): u64 { ENOT_CREATOR }
+
+    const EEXPIRED_ON_CREATE_INTENT: u64 = 207;
+    public fun expired_on_create_intent(): u64 { EEXPIRED_ON_CREATE_INTENT }
+
+    const EZERO_RECEIVE_AMOUNT: u64 = 208;
+    public fun zero_receive_amount(): u64 { EZERO_RECEIVE_AMOUNT }
+
+    const EZERO_ESCROW_AMOUNT: u64 = 209;
+    public fun zero_escrow_amount(): u64 { EZERO_ESCROW_AMOUNT }
 
     // ===== Capability Errors (300-399) =====
 
@@ -79,20 +112,9 @@ module davy::errors {
     const EOFFER_ALREADY_IN_POOL: u64 = 401;
     public fun offer_already_in_pool(): u64 { EOFFER_ALREADY_IN_POOL }
 
-    const EOFFER_NOT_IN_POOL: u64 = 402;
+    const ENOT_POOL_CREATOR: u64 = 402;
+    public fun not_pool_creator(): u64 { ENOT_POOL_CREATOR }
+
+    const EOFFER_NOT_IN_POOL: u64 = 403;
     public fun offer_not_in_pool(): u64 { EOFFER_NOT_IN_POOL }
-    
-    // ===== Intent Errors (re-indexed) =====
-
-    const EINTENT_EXPIRED: u64 = 500;
-    public fun intent_expired(): u64 { EINTENT_EXPIRED }
-
-    const EINTENT_NOT_ACTIVE: u64 = 501;
-    public fun intent_not_active(): u64 { EINTENT_NOT_ACTIVE }
-
-    const ENOT_EXECUTOR: u64 = 502;
-    public fun not_executor(): u64 { ENOT_EXECUTOR }
-
-    const EINVALID_INTENT_STATUS: u64 = 503;
-    public fun invalid_intent_status(): u64 { EINVALID_INTENT_STATUS }
 }

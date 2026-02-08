@@ -1,6 +1,23 @@
 /// Davy Protocol — Offer Module
-/// LiquidityOffer is the core primitive: a discrete on-chain object
-/// that IS the liquidity, with explicit lifecycle and price bounds.
+///
+/// `LiquidityOffer<OfferAsset, WantAsset>` is the core protocol primitive:
+/// a discrete on-chain object that IS the liquidity, with explicit lifecycle,
+/// price bounds, and fill policies.
+///
+/// ## Lifecycle
+///   Created → PartiallyFilled → Filled
+///   Created → Expired | Withdrawn
+///   PartiallyFilled → Filled | Expired | Withdrawn
+///
+/// ## Price Semantics
+///   All prices are WantAsset per 1 OfferAsset, scaled by 1e9.
+///   Formula: `price = (want_amount * 1e9) / offer_amount`
+///   All intermediate math uses u128 to prevent overflow.
+///
+/// ## Fill Policies
+///   - `FILL_POLICY_FULL_ONLY (0)`: Only full fills accepted.
+///   - `FILL_POLICY_PARTIAL_ALLOWED (1)`: Partial fills accepted,
+///     subject to `min_fill_amount` and dust prevention.
 module davy::offer {
     use sui::coin::{Self, Coin};
     use sui::balance::{Self, Balance};

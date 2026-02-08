@@ -5,7 +5,6 @@ module davy::fill_tests {
     use sui::coin::{Self, Coin};
 
     use davy::offer::{Self, LiquidityOffer};
-    use davy::errors;
 
     // ===== Test coin types =====
     public struct SUI has drop {}
@@ -13,8 +12,7 @@ module davy::fill_tests {
 
     // ===== Helpers =====
 
-    fun mint_coin<T: drop>(witness: T, amount: u64, ctx: &mut TxContext): Coin<T> {
-        let _ = witness;
+    fun mint_coin<T: drop>(_witness: T, amount: u64, ctx: &mut TxContext): Coin<T> {
         coin::from_balance(sui::balance::create_for_testing<T>(amount), ctx)
     }
 
@@ -174,8 +172,8 @@ module davy::fill_tests {
             assert!(coin::value(&offer_coin) == 1_000_000_000, 4);
 
             // Manual routing
-            sui::transfer::public_transfer(offer_coin, @0xB);
-            sui::transfer::public_transfer(payment_coin, @0xA);
+            transfer::public_transfer(offer_coin, @0xB);
+            transfer::public_transfer(payment_coin, @0xA);
 
             ts::return_shared(offer);
         };
@@ -189,7 +187,7 @@ module davy::fill_tests {
     // =========================================================
 
     #[test]
-    #[expected_failure(abort_code = errors::EPRICE_TOO_LOW, location = davy::offer)]
+    #[expected_failure(abort_code = 107, location = davy::offer)]
     fun test_fill_price_too_low() {
         let mut scenario = ts::begin(@0xA);
         let clock = setup_clock(&mut scenario);
@@ -214,7 +212,7 @@ module davy::fill_tests {
     // =========================================================
 
     #[test]
-    #[expected_failure(abort_code = errors::EPRICE_TOO_HIGH, location = davy::offer)]
+    #[expected_failure(abort_code = 108, location = davy::offer)]
     fun test_fill_price_too_high() {
         let mut scenario = ts::begin(@0xA);
         let clock = setup_clock(&mut scenario);
@@ -239,7 +237,7 @@ module davy::fill_tests {
     // =========================================================
 
     #[test]
-    #[expected_failure(abort_code = errors::EOFFER_EXPIRED, location = davy::offer)]
+    #[expected_failure(abort_code = 105, location = davy::offer)]
     fun test_fill_expired_offer() {
         let mut scenario = ts::begin(@0xA);
         let mut clock = setup_clock(&mut scenario);
@@ -265,7 +263,7 @@ module davy::fill_tests {
     // =========================================================
 
     #[test]
-    #[expected_failure(abort_code = errors::EPARTIAL_FILL_NOT_ALLOWED, location = davy::offer)]
+    #[expected_failure(abort_code = 110, location = davy::offer)]
     fun test_partial_fill_on_full_only() {
         let mut scenario = ts::begin(@0xA);
         let clock = setup_clock(&mut scenario);
@@ -291,7 +289,7 @@ module davy::fill_tests {
     // =========================================================
 
     #[test]
-    #[expected_failure(abort_code = errors::EFILL_BELOW_MINIMUM, location = davy::offer)]
+    #[expected_failure(abort_code = 111, location = davy::offer)]
     fun test_fill_below_minimum() {
         let mut scenario = ts::begin(@0xA);
         let clock = setup_clock(&mut scenario);
@@ -318,7 +316,7 @@ module davy::fill_tests {
     // =========================================================
 
     #[test]
-    #[expected_failure(abort_code = errors::EFILL_EXCEEDS_REMAINING, location = davy::offer)]
+    #[expected_failure(abort_code = 112, location = davy::offer)]
     fun test_fill_exceeds_remaining() {
         let mut scenario = ts::begin(@0xA);
         let clock = setup_clock(&mut scenario);
@@ -345,7 +343,7 @@ module davy::fill_tests {
     // =========================================================
 
     #[test]
-    #[expected_failure(abort_code = errors::EWOULD_LEAVE_DUST, location = davy::offer)]
+    #[expected_failure(abort_code = 113, location = davy::offer)]
     fun test_dust_prevention() {
         let mut scenario = ts::begin(@0xA);
         let clock = setup_clock(&mut scenario);
@@ -536,7 +534,7 @@ module davy::fill_tests {
     // =========================================================
 
     #[test]
-    #[expected_failure(abort_code = errors::EOFFER_NOT_FILLABLE, location = davy::offer)]
+    #[expected_failure(abort_code = 106, location = davy::offer)]
     fun test_double_fill_rejected() {
         let mut scenario = ts::begin(@0xA);
         let clock = setup_clock(&mut scenario);

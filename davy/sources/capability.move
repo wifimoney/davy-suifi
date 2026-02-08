@@ -1,5 +1,19 @@
 /// Davy Protocol — Capability System
-/// AdminCap-gated minting of executor and partial-fill capabilities.
+///
+/// Two-tier capability model for protocol administration and
+/// delegated intent execution.
+///
+/// ## Capabilities (V1)
+///   - `AdminCap` — Created once at module publish. Gates all cap minting.
+///   - `ExecutorCap` — Required for intent execution. Mintable, transferable, revocable.
+///
+/// ## PartialFillCap (Deprecated in V1)
+///   Retained as a future extension point. Partial fills are controlled
+///   by the offer's `fill_policy` field in V1.
+///
+/// ## Minting Flow
+///   Deployment → AdminCap → Deployer
+///   AdminCap holder → mint_executor_cap() → ExecutorCap → Bot/DAO/Relayer
 module davy::capability {
     use davy::errors;
     use davy::events;
@@ -22,8 +36,8 @@ module davy::capability {
         minted_by: address,
     }
 
-    /// Partial fill capability — optional extension.
-    /// Could gate partial fill permissions independently of offer fill_policy.
+    /// @deprecated V1: Partial fill capability — retained for future extension.
+    /// Partial fills are controlled by offer `fill_policy` in V1. Do not use.
     public struct PartialFillCap has key, store {
         id: UID,
         /// Human-readable label

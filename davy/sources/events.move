@@ -1,5 +1,14 @@
 /// Davy Protocol — Event Layer
-/// Every state transition emits exactly one event.
+///
+/// Every state transition emits exactly one event. Events are the sole
+/// indexing mechanism — no object scans needed. Off-chain indexers
+/// reconstruct full protocol activity from these events alone.
+///
+/// ## Event Categories
+///   - Offer events: OfferCreated, OfferFilled, OfferWithdrawn, OfferExpired
+///   - Intent events: IntentSubmitted, IntentExecuted, IntentCancelled, IntentExpired
+///   - Capability events: AdminCapCreated, ExecutorCapMinted, ExecutorCapDestroyed
+///   - Pool events: PoolCreated, OfferAddedToPool, OfferRemovedFromPool
 module davy::events {
     use sui::event;
 

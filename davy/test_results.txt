@@ -1,0 +1,241 @@
+[NOTE] Dependencies on Sui, MoveStdlib, Bridge, DeepBook, and SuiSystem are automatically added, but this feature is disabled for your package because you have explicitly included dependencies on Sui. Consider removing these dependencies from `Move.toml`.
+[NOTE] Updating dependencies for `mainnet` environment because "./Move.toml" has been changed since the last update.
+INCLUDING DEPENDENCY MoveStdlib
+INCLUDING DEPENDENCY Sui
+BUILDING davy
+[0m[1m[38;5;11mwarning[W10007][0m[1m: issue with attribute value[0m
+   [0m[34m┌─[0m ./tests/pool_tests.move:40:24
+   [0m[34m│[0m
+[0m[34m40[0m [0m[34m│[0m     #[expected_failure([0m[33mabort_code = 400[0m)]
+   [0m[34m│[0m                        [0m[33m^^^^^^^^^^^^^^^^[0m
+   [0m[34m│[0m                        [0m[33m│[0m            [0m[34m│[0m
+   [0m[34m│[0m                        [0m[33m│[0m            [0m[34mReplace value with a constant from expected module or add 'location=...'[0m
+   [0m[34m│[0m                        [0m[33mWARNING: passes for an abort from any module[0m
+
+[0m[1m[38;5;11mwarning[W10007][0m[1m: issue with attribute value[0m
+    [0m[34m┌─[0m ./tests/capability_tests.move:224:24
+    [0m[34m│[0m
+[0m[34m224[0m [0m[34m│[0m     #[expected_failure([0m[33mabort_code = 300[0m)]
+    [0m[34m│[0m                        [0m[33m^^^^^^^^^^^^^^^^[0m
+    [0m[34m│[0m                        [0m[33m│[0m            [0m[34m│[0m
+    [0m[34m│[0m                        [0m[33m│[0m            [0m[34mReplace value with a constant from expected module or add 'location=...'[0m
+    [0m[34m│[0m                        [0m[33mWARNING: passes for an abort from any module[0m
+
+[0m[1m[38;5;11mwarning[W10007][0m[1m: issue with attribute value[0m
+    [0m[34m┌─[0m ./tests/intent_tests.move:402:24
+    [0m[34m│[0m
+[0m[34m402[0m [0m[34m│[0m     #[expected_failure([0m[33mabort_code = 200[0m)]
+    [0m[34m│[0m                        [0m[33m^^^^^^^^^^^^^^^^[0m
+    [0m[34m│[0m                        [0m[33m│[0m            [0m[34m│[0m
+    [0m[34m│[0m                        [0m[33m│[0m            [0m[34mReplace value with a constant from expected module or add 'location=...'[0m
+    [0m[34m│[0m                        [0m[33mWARNING: passes for an abort from any module[0m
+
+[0m[1m[38;5;11mwarning[W10007][0m[1m: issue with attribute value[0m
+    [0m[34m┌─[0m ./tests/intent_tests.move:662:24
+    [0m[34m│[0m
+[0m[34m662[0m [0m[34m│[0m     #[expected_failure([0m[33mabort_code = 200[0m)]
+    [0m[34m│[0m                        [0m[33m^^^^^^^^^^^^^^^^[0m
+    [0m[34m│[0m                        [0m[33m│[0m            [0m[34m│[0m
+    [0m[34m│[0m                        [0m[33m│[0m            [0m[34mReplace value with a constant from expected module or add 'location=...'[0m
+    [0m[34m│[0m                        [0m[33mWARNING: passes for an abort from any module[0m
+
+Running Move unit tests
+[ PASS    ] davy::capability_tests::test_admin_cap_created_on_init
+[ PASS    ] davy::pool_tests::test_add_duplicate_offer_aborts
+[ PASS    ] davy::intent_tests::test_cancel_intent
+[ PASS    ] davy::fill_tests::test_double_fill_rejected
+[ PASS    ] davy::offer_tests::test_create_equal_price_bounds
+[ FAIL    ] davy::integration_tests::test_e2e_managed_execution_flow
+[ PASS    ] davy::capability_tests::test_destroy_executor_cap
+[ FAIL    ] davy::pool_tests::test_add_offer_not_creator_aborts
+[ PASS    ] davy::capability_tests::test_destroy_partial_fill_cap
+[ PASS    ] davy::intent_tests::test_cancel_not_creator_aborts
+[ PASS    ] davy::fill_tests::test_dust_prevention
+[ PASS    ] davy::offer_tests::test_create_expired_on_create
+[ PASS    ] davy::integration_tests::test_sequential_fills_with_pool_updates
+[ PASS    ] davy::pool_tests::test_add_offer_to_pool
+[ PASS    ] davy::capability_tests::test_mint_executor_cap
+[ PASS    ] davy::fill_tests::test_exact_max_price_boundary
+[ PASS    ] davy::offer_tests::test_create_invalid_fill_policy
+[ PASS    ] davy::pool_tests::test_create_pool
+[ PASS    ] davy::intent_tests::test_create_expired_aborts
+[ PASS    ] davy::capability_tests::test_mint_executor_cap_empty_label_aborts
+[ PASS    ] davy::fill_tests::test_exact_min_remainder_allowed
+[ PASS    ] davy::offer_tests::test_create_invalid_price_bounds
+[ PASS    ] davy::pool_tests::test_empty_pool_name_aborts
+[ PASS    ] davy::capability_tests::test_mint_multiple_executor_caps
+[ PASS    ] davy::intent_tests::test_create_intent
+[ PASS    ] davy::pool_tests::test_multiple_offers
+[ PASS    ] davy::offer_tests::test_create_min_fill_exceeds_amount
+[ PASS    ] davy::fill_tests::test_fill_below_minimum
+[ PASS    ] davy::capability_tests::test_mint_partial_fill_cap
+[ FAIL    ] davy::pool_tests::test_remove_missing_offer_aborts
+[ PASS    ] davy::intent_tests::test_create_zero_payment_aborts
+[ PASS    ] davy::offer_tests::test_create_offer_happy_path
+[ PASS    ] davy::fill_tests::test_fill_exceeds_remaining
+[ PASS    ] davy::capability_tests::test_mint_partial_fill_cap_empty_label_aborts
+[ FAIL    ] davy::pool_tests::test_remove_not_creator_aborts
+[ PASS    ] davy::intent_tests::test_create_zero_receive_aborts
+[ PASS    ] davy::pool_tests::test_remove_offer_from_pool
+[ PASS    ] davy::capability_tests::test_transfer_admin_cap
+[ PASS    ] davy::offer_tests::test_create_offer_partial_policy
+[ PASS    ] davy::fill_tests::test_fill_expired_offer
+[ PASS    ] davy::capability_tests::test_transfer_executor_cap
+[ PASS    ] davy::intent_tests::test_double_cancel_aborts
+[ PASS    ] davy::offer_tests::test_create_zero_amount
+[ PASS    ] davy::fill_tests::test_fill_full_and_settle
+[ PASS    ] davy::capability_tests::test_transfer_partial_fill_cap
+[ PASS    ] davy::intent_tests::test_double_execute_aborts
+[ PASS    ] davy::offer_tests::test_create_zero_min_price
+[ PASS    ] davy::fill_tests::test_fill_full_low_level_receipt
+[ PASS    ] davy::offer_tests::test_expire_after_expiry
+[ FAIL    ] davy::intent_tests::test_execute_against_offer_full
+[ PASS    ] davy::fill_tests::test_fill_partial_and_settle
+[ PASS    ] davy::offer_tests::test_expire_before_time
+[ PASS    ] davy::fill_tests::test_fill_price_too_high
+[ PASS    ] davy::intent_tests::test_execute_expired_intent_aborts
+[ PASS    ] davy::offer_tests::test_expire_exact_boundary
+[ PASS    ] davy::fill_tests::test_fill_price_too_low
+[ FAIL    ] davy::intent_tests::test_execute_partial_fill
+[ PASS    ] davy::offer_tests::test_is_fillable_false_after_expiry
+[ PASS    ] davy::fill_tests::test_partial_fill_on_full_only
+[ PASS    ] davy::intent_tests::test_execute_uses_offer_min_price
+[ PASS    ] davy::offer_tests::test_withdraw_from_created
+[ PASS    ] davy::fill_tests::test_price_math
+[ FAIL    ] davy::intent_tests::test_expire_before_time_aborts
+[ PASS    ] davy::offer_tests::test_withdraw_not_maker
+[ PASS    ] davy::fill_tests::test_sequential_partial_fills
+[ PASS    ] davy::intent_tests::test_expire_intent
+[ PASS    ] davy::fill_tests::test_withdraw_after_partial_fill
+[ PASS    ] davy::intent_tests::test_insufficient_escrow_aborts
+[ PASS    ] davy::intent_tests::test_insufficient_offer_liquidity_aborts
+[ PASS    ] davy::intent_tests::test_price_mismatch_aborts
+
+Test failures:
+
+Failures in davy::integration_tests:
+
+┌── test_e2e_managed_execution_flow ──────
+│ error[E11001]: test failure
+│     ┌─ /Users/elibelilty/.move/git/https___github_com_MystenLabs_sui_git_c7566e601c9a64154850c1cb074a90d7fc11bba4/crates/sui-framework/packages/sui-framework/sources/test/test_scenario.move:456:5
+│     │
+│ 454 │ public fun take_from_address<T: key>(scenario: &Scenario, account: address): T {
+│     │            ----------------- In this function in sui::test_scenario
+│ 455 │     let id_opt = most_recent_id_for_address<T>(account);
+│ 456 │     assert!(id_opt.is_some(), EEmptyInventory);
+│     │     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ Test was not expected to error, but it aborted with code 3 originating in the module sui::test_scenario rooted here
+│ 
+│ 
+│ stack trace
+│ 	test_scenario::take_from_sender(/Users/elibelilty/.move/git/https___github_com_MystenLabs_sui_git_c7566e601c9a64154850c1cb074a90d7fc11bba4/crates/sui-framework/packages/sui-framework/sources/test/test_scenario.move:491)
+│ 	integration_tests::test_e2e_managed_execution_flow(./tests/integration_tests.move:103)
+│ 
+└──────────────────
+
+Failures in davy::intent_tests:
+
+┌── test_execute_against_offer_full ──────
+│ error[E11001]: test failure
+│     ┌─ /Users/elibelilty/.move/git/https___github_com_MystenLabs_sui_git_c7566e601c9a64154850c1cb074a90d7fc11bba4/crates/sui-framework/packages/sui-framework/sources/test/test_scenario.move:456:5
+│     │
+│ 454 │ public fun take_from_address<T: key>(scenario: &Scenario, account: address): T {
+│     │            ----------------- In this function in sui::test_scenario
+│ 455 │     let id_opt = most_recent_id_for_address<T>(account);
+│ 456 │     assert!(id_opt.is_some(), EEmptyInventory);
+│     │     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ Test was not expected to error, but it aborted with code 3 originating in the module sui::test_scenario rooted here
+│ 
+│ 
+│ stack trace
+│ 	test_scenario::take_from_sender(/Users/elibelilty/.move/git/https___github_com_MystenLabs_sui_git_c7566e601c9a64154850c1cb074a90d7fc11bba4/crates/sui-framework/packages/sui-framework/sources/test/test_scenario.move:491)
+│ 	intent_tests::test_execute_against_offer_full(./tests/intent_tests.move:161)
+│ 
+└──────────────────
+
+
+┌── test_execute_partial_fill ──────
+│ error[E11001]: test failure
+│     ┌─ /Users/elibelilty/.move/git/https___github_com_MystenLabs_sui_git_c7566e601c9a64154850c1cb074a90d7fc11bba4/crates/sui-framework/packages/sui-framework/sources/test/test_scenario.move:456:5
+│     │
+│ 454 │ public fun take_from_address<T: key>(scenario: &Scenario, account: address): T {
+│     │            ----------------- In this function in sui::test_scenario
+│ 455 │     let id_opt = most_recent_id_for_address<T>(account);
+│ 456 │     assert!(id_opt.is_some(), EEmptyInventory);
+│     │     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ Test was not expected to error, but it aborted with code 3 originating in the module sui::test_scenario rooted here
+│ 
+│ 
+│ stack trace
+│ 	test_scenario::take_from_sender(/Users/elibelilty/.move/git/https___github_com_MystenLabs_sui_git_c7566e601c9a64154850c1cb074a90d7fc11bba4/crates/sui-framework/packages/sui-framework/sources/test/test_scenario.move:491)
+│ 	intent_tests::test_execute_partial_fill(./tests/intent_tests.move:228)
+│ 
+└──────────────────
+
+
+┌── test_expire_before_time_aborts ──────
+│ error[E11001]: test failure
+│     ┌─ ./sources/intent.move:178:9
+│     │
+│ 173 │     public fun expire_intent<ReceiveAsset, PayAsset>(
+│     │                ------------- In this function in davy::intent
+│     ·
+│ 178 │         assert!(clock::timestamp_ms(clock) >= intent.expiry_timestamp_ms, errors::not_yet_expired_intent());
+│     │         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ Test did not error as expected. Expected test to abort with code 201 originating in the module davy::intent but instead it aborted with code 202 originating in the module davy::intent rooted here
+│ 
+│ 
+│ stack trace
+│ 	intent_tests::test_expire_before_time_aborts(./tests/intent_tests.move:350)
+│ 
+└──────────────────
+
+Failures in davy::pool_tests:
+
+┌── test_add_offer_not_creator_aborts ──────
+│ error[E11001]: test failure
+│    ┌─ ./sources/pool.move:75:9
+│    │
+│ 70 │     public fun add_offer<OfferAsset, WantAsset>(
+│    │                --------- In this function in davy::pool
+│    ·
+│ 75 │         assert!(tx_context::sender(ctx) == pool.creator, errors::not_creator());
+│    │         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ Test did not error as expected. Expected test to abort with code 402 originating in the module davy::pool but instead it aborted with code 206 originating in the module davy::pool rooted here
+│ 
+│ 
+│ stack trace
+│ 	pool_tests::test_add_offer_not_creator_aborts(./tests/pool_tests.move:85)
+│ 
+└──────────────────
+
+
+┌── test_remove_missing_offer_aborts ──────
+│ error[E11001]: test failure
+│    ┌─ ./sources/pool.move:95:9
+│    │
+│ 89 │     public fun remove_offer<OfferAsset, WantAsset>(
+│    │                ------------ In this function in davy::pool
+│    ·
+│ 95 │         assert!(vec_set::contains(&pool.offer_ids, &offer_id), errors::offer_not_in_pool());
+│    │         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ Test did not error as expected. Expected test to abort with code 403 originating in the module davy::pool but instead it aborted with code 402 originating in the module davy::pool rooted here
+│ 
+│ 
+│ stack trace
+│ 	pool_tests::test_remove_missing_offer_aborts(./tests/pool_tests.move:148)
+│ 
+└──────────────────
+
+
+┌── test_remove_not_creator_aborts ──────
+│ error[E11001]: test failure
+│    ┌─ ./sources/pool.move:94:9
+│    │
+│ 89 │     public fun remove_offer<OfferAsset, WantAsset>(
+│    │                ------------ In this function in davy::pool
+│    ·
+│ 94 │         assert!(tx_context::sender(ctx) == pool.creator, errors::not_creator());
+│    │         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ Test did not error as expected. Expected test to abort with code 402 originating in the module davy::pool but instead it aborted with code 206 originating in the module davy::pool rooted here
+│ 
+│ 
+│ stack trace
+│ 	pool_tests::test_remove_not_creator_aborts(./tests/pool_tests.move:174)
+│ 
+└──────────────────
+
+Test result: FAILED. Total tests: 70; passed: 63; failed: 7
