@@ -1,7 +1,7 @@
 module davy::errors {
     public fun zero_amount(): u64 { 100 }
     public fun zero_min_price(): u64 { 101 }
-    public fun zero_min_amount(): u64 { 101 } // Just in case
+    public fun zero_min_amount(): u64 { 101 }
     public fun zero_max_price(): u64 { 102 }
     public fun invalid_price_bounds(): u64 { 103 }
     public fun invalid_fill_policy(): u64 { 104 }
@@ -19,4 +19,10 @@ module davy::errors {
     public fun not_yet_expired(): u64 { 116 }
     public fun invalid_status_for_expire(): u64 { 117 }
     public fun min_fill_exceeds_amount(): u64 { 118 }
+    public fun empty_label(): u64 { 300 }
+    public fun intent_expired(): u64 { 400 }
+    public fun intent_not_active(): u64 { 401 }
+    public fun not_creator(): u64 { 402 }
+    public fun not_executor(): u64 { 403 }
+    public fun invalid_intent_status(): u64 { 404 }
 }
