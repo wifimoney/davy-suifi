@@ -78,7 +78,7 @@ module davy::pool {
         vec_set::insert(&mut pool.offer_ids, offer_id);
 
         let pool_id = object::uid_to_inner(&pool.id);
-        events::emit_offer_added_to_pool(pool_id, offer_id);
+        events::emit_offer_added_to_pool(pool_id, offer_id, tx_context::sender(ctx));
     }
 
     /// Remove an offer ID from the pool index.
@@ -97,7 +97,7 @@ module davy::pool {
         vec_set::remove(&mut pool.offer_ids, &offer_id);
 
         let pool_id = object::uid_to_inner(&pool.id);
-        events::emit_offer_removed_from_pool(pool_id, offer_id);
+        events::emit_offer_removed_from_pool(pool_id, offer_id, tx_context::sender(ctx));
     }
 
     // ===== View Functions (5.4) =====

@@ -79,7 +79,8 @@ module davy::intent {
             intent_id,
             creator,
             receive_amount,
-            payment_amount,
+            payment_amount,  // max_pay_amount (conceptually)
+            payment_amount,  // escrowed_amount (actual balance)
             min_price,
             max_price,
             expiry,

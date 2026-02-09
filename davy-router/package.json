@@ -1,0 +1,19 @@
+{
+    "name": "@davy/router-reference",
+    "version": "0.1.0",
+    "description": "Davy Protocol — off-chain router reference implementation. Proves that the Davy primitive composes into real execution outcomes.",
+    "type": "module",
+    "main": "dist/index.js",
+    "scripts": {
+        "build": "tsc",
+        "demo": "tsx src/demo.ts",
+        "test": "tsx src/demo.ts"
+    },
+    "dependencies": {
+        "@mysten/sui": "^1.0.0"
+    },
+    "devDependencies": {
+        "tsx": "^4.0.0",
+        "typescript": "^5.3.0"
+    }
+}

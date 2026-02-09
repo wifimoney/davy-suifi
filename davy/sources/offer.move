@@ -525,4 +525,127 @@ module davy::offer {
 
     public fun fill_policy_full_only(): u8 { FILL_POLICY_FULL_ONLY }
     public fun fill_policy_partial_allowed(): u8 { FILL_POLICY_PARTIAL_ALLOWED }
+
+    // =========================================================================
+    // QUOTE HELPERS — Pure view functions for router integration (Phase 7)
+    // =========================================================================
+    //
+    // These functions replicate the EXACT math used in fill_full/fill_partial
+    // so that off-chain routers can price-check offers without simulating fills.
+    //
+    // Rounding rules:
+    //   quote_pay_amount:  ceiling division — never under-charges the taker
+    //   quote_fill_amount: floor division   — never over-promises to the taker
+    //
+    // Both use u128 intermediates, identical to calc_payment/calculate_price.
+    // The invariant: for any valid fill_amount,
+    //   quote_pay_amount(offer, fill_amount) == actual payment in fill_*_and_settle
+    //
+    // =========================================================================
+
+    /// Quote: "If I want `fill_amount` of OfferAsset, how much WantAsset do I pay?"
+    ///
+    /// Uses the offer's max_price for quoting (worst-case for taker).
+    /// Returns the exact payment amount that fill_*_and_settle would require.
+    ///
+    /// Aborts if:
+    ///   - offer is not fillable (wrong status or expired — but no Clock here,
+    ///     caller must check expiry separately)
+    ///   - fill_amount is zero
+    ///   - fill_amount exceeds remaining balance
+    ///   - fill would leave dust (remainder < min_fill_amount)
+    ///   - offer is full-only and fill_amount != remaining
+    ///
+    /// Rounding: ceiling (taker never under-pays)
+    public fun quote_pay_amount<OfferAsset, WantAsset>(
+        offer: &LiquidityOffer<OfferAsset, WantAsset>,
+        fill_amount: u64,
+        price: u64,
+    ): u64 {
+        let remaining = balance::value(&offer.offer_balance);
+
+        // Status guard (no clock check — caller responsibility)
+        assert!(
+            offer.status == STATUS_CREATED || offer.status == STATUS_PARTIALLY_FILLED,
+            errors::invalid_status_for_fill()
+        );
+
+        // Amount guards
+        assert!(fill_amount > 0, errors::zero_amount());
+        assert!(fill_amount <= remaining, errors::fill_exceeds_remaining());
+
+        // Fill policy guard
+        if (fill_amount < remaining) {
+            assert!(
+                offer.fill_policy == FILL_POLICY_PARTIAL_ALLOWED,
+                errors::partial_fill_not_allowed()
+            );
+            assert!(fill_amount >= offer.min_fill_amount, errors::fill_below_minimum());
+            // Dust check
+            let would_remain = remaining - fill_amount;
+            if (would_remain > 0) {
+                assert!(would_remain >= offer.min_fill_amount, errors::would_leave_dust());
+            };
+        };
+
+        // Price bounds check
+        assert!(price >= offer.min_price, errors::price_too_low());
+        assert!(price <= offer.max_price, errors::price_too_high());
+
+        // Calculate payment — ceiling division, identical to calc_payment
+        // payment = ceil(fill_amount * price / 1e9)
+        let fill_u128 = (fill_amount as u128);
+        let price_u128 = (price as u128);
+        let scaling = PRICE_SCALING_FACTOR;
+        let numerator = fill_u128 * price_u128;
+        let payment_u128 = (numerator + scaling - 1) / scaling;
+
+        (payment_u128 as u64)
+    }
+
+    /// Quote: "If I have `pay_budget` of WantAsset, how much OfferAsset can I receive?"
+    ///
+    /// Inverse of quote_pay_amount. Uses floor division so we never over-promise.
+    /// The returned fill_amount is the MAXIMUM receivable for the given budget.
+    ///
+    /// Does NOT validate fill policy or dust — caller must check those constraints
+    /// separately if building a router. This is intentional: the router needs the
+    /// raw max-fill to then clamp against min_fill and dust rules.
+    ///
+    /// Rounding: floor (taker never receives more than they paid for)
+    public fun quote_fill_amount<OfferAsset, WantAsset>(
+        offer: &LiquidityOffer<OfferAsset, WantAsset>,
+        pay_budget: u64,
+        price: u64,
+    ): u64 {
+        let remaining = balance::value(&offer.offer_balance);
+
+        // Status guard
+        assert!(
+            offer.status == STATUS_CREATED || offer.status == STATUS_PARTIALLY_FILLED,
+            errors::invalid_status_for_fill()
+        );
+
+        assert!(pay_budget > 0, errors::zero_amount());
+        assert!(price > 0, errors::zero_min_price()); // using zero_min_price as general zero_price error
+
+        // Price bounds check
+        assert!(price >= offer.min_price, errors::price_too_low());
+        assert!(price <= offer.max_price, errors::price_too_high());
+
+        // Calculate max fill — floor division, never over-promise
+        // fill = floor(pay_budget * 1e9 / price)
+        let pay_u128 = (pay_budget as u128);
+        let price_u128 = (price as u128);
+        let scaling = PRICE_SCALING_FACTOR;
+        let fill_u128 = (pay_u128 * scaling) / price_u128;
+        let fill = (fill_u128 as u64);
+
+        // Clamp to remaining
+        if (fill > remaining) {
+            remaining
+        } else {
+            fill
+        }
+    }
 }

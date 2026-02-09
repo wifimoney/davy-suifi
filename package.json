@@ -1,0 +1,22 @@
+{
+  "name": "davy-suifi-monorepo",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "dashboard"
+  ],
+  "scripts": {
+    "dev": "bun run --cwd dashboard dev",
+    "build": "bun run build:web && bun run build:sui",
+    "build:web": "bun run --cwd dashboard build",
+    "build:sui": "sui move build --path davy",
+    "test": "bun run test:sui",
+    "test:sui": "sui move test --path davy",
+    "lint": "bun run --cwd dashboard lint",
+    "deploy:sui": "sui client publish --gas-budget 100000000 --path davy"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.0"
+  }
+}

@@ -17,7 +17,7 @@ module davy::events {
     public struct OfferCreated has copy, drop {
         offer_id: ID,
         maker: address,
-        offer_amount: u64,
+        initial_offer_amount: u64,
         min_price: u64,
         max_price: u64,
         expiry_timestamp_ms: u64,
@@ -55,6 +55,7 @@ module davy::events {
         creator: address,
         receive_amount: u64,
         max_pay_amount: u64,
+        escrowed_amount: u64,
         min_price: u64,
         max_price: u64,
         expiry_timestamp_ms: u64,
@@ -122,11 +123,13 @@ module davy::events {
     public struct OfferAddedToPool has copy, drop {
         pool_id: ID,
         offer_id: ID,
+        added_by: address,
     }
 
     public struct OfferRemovedFromPool has copy, drop {
         pool_id: ID,
         offer_id: ID,
+        removed_by: address,
     }
 
     // ===== Emitter Functions =====
@@ -134,7 +137,7 @@ module davy::events {
     public fun emit_offer_created(
         offer_id: ID,
         maker: address,
-        offer_amount: u64,
+        initial_offer_amount: u64,
         min_price: u64,
         max_price: u64,
         expiry_timestamp_ms: u64,
@@ -142,7 +145,7 @@ module davy::events {
         min_fill_amount: u64,
     ) {
         event::emit(OfferCreated {
-            offer_id, maker, offer_amount,
+            offer_id, maker, initial_offer_amount,
             min_price, max_price, expiry_timestamp_ms,
             fill_policy, min_fill_amount,
         });
@@ -189,13 +192,14 @@ module davy::events {
         creator: address,
         receive_amount: u64,
         max_pay_amount: u64,
+        escrowed_amount: u64,
         min_price: u64,
         max_price: u64,
         expiry_timestamp_ms: u64,
     ) {
         event::emit(IntentSubmitted {
             intent_id, creator, receive_amount,
-            max_pay_amount, min_price, max_price,
+            max_pay_amount, escrowed_amount, min_price, max_price,
             expiry_timestamp_ms,
         });
     }
@@ -280,11 +284,23 @@ module davy::events {
         event::emit(PoolCreated { pool_id, creator, name });
     }
 
-    public fun emit_offer_added_to_pool(pool_id: ID, offer_id: ID) {
-        event::emit(OfferAddedToPool { pool_id, offer_id });
+    public fun emit_offer_added_to_pool(
+        pool_id: ID,
+        offer_id: ID,
+        added_by: address,
+    ) {
+        event::emit(OfferAddedToPool {
+            pool_id, offer_id, added_by,
+        });
     }
 
-    public fun emit_offer_removed_from_pool(pool_id: ID, offer_id: ID) {
-        event::emit(OfferRemovedFromPool { pool_id, offer_id });
+    public fun emit_offer_removed_from_pool(
+        pool_id: ID,
+        offer_id: ID,
+        removed_by: address,
+    ) {
+        event::emit(OfferRemovedFromPool {
+            pool_id, offer_id, removed_by,
+        });
     }
 }

@@ -211,3 +211,229 @@ Requires Sui CLI with `mainnet-v1.25.0` framework.
 ## License
 
 UNLICENSED — All rights reserved.
+
+---
+
+## 📐 Deterministic Rounding Rules (Router Integration)
+
+Off-chain routers MUST replicate Davy's pricing math exactly. Any discrepancy
+means the router's quoted amount won't match the on-chain fill, causing TX failure.
+
+### Price Representation
+
+All prices are **WantAsset per 1 OfferAsset**, scaled by **1e9** (1,000,000,000).
+
+```
+price = 2_000_000_000  →  "2.0 WantAsset per 1 OfferAsset"
+price = 1_500_000_000  →  "1.5 WantAsset per 1 OfferAsset"
+```
+
+### Core Functions
+
+#### `calc_payment(fill_amount, price) → payment`
+
+How much WantAsset the taker pays for `fill_amount` of OfferAsset.
+
+**Rounding: CEILING** — taker never under-pays.
+
+```
+payment = ceil(fill_amount × price / 1e9)
+        = (fill_amount × price + 1e9 - 1) / 1e9    [integer math]
+```
+
+**TypeScript equivalent:**
+```typescript
+function calcPayment(fillAmount: bigint, price: bigint): bigint {
+  const SCALING = 1_000_000_000n;
+  return (fillAmount * price + SCALING - 1n) / SCALING;
+}
+```
+
+#### `calculate_price(payment_amount, fill_amount) → price`
+
+Effective price of a fill (used for validation, not quoting).
+
+**Rounding: FLOOR** — computed price never exceeds actual rate.
+
+```
+price = floor(payment_amount × 1e9 / fill_amount)
+      = (payment_amount × 1e9) / fill_amount    [integer math]
+```
+
+**TypeScript equivalent:**
+```typescript
+function calculatePrice(paymentAmount: bigint, fillAmount: bigint): bigint {
+  const SCALING = 1_000_000_000n;
+  return (paymentAmount * SCALING) / fillAmount;
+}
+```
+
+#### `quote_pay_amount(offer, fill_amount, price) → payment`
+
+**Same math as `calc_payment`** plus validation guards.
+
+- Checks: status, fill_amount ≤ remaining, fill policy, dust, price bounds
+- Rounding: **CEILING**
+- Use this to get the exact payment for a planned fill
+
+#### `quote_fill_amount(offer, pay_budget, price) → fill_amount`
+
+**Inverse of `calc_payment`** — how much OfferAsset for a given WantAsset budget.
+
+**Rounding: FLOOR** — never over-promises.
+
+```
+fill_amount = floor(pay_budget × 1e9 / price)
+            = (pay_budget × 1e9) / price    [integer math]
+```
+
+Result is clamped to `min(calculated, remaining_balance)`.
+
+**TypeScript equivalent:**
+```typescript
+function quoteFillAmount(payBudget: bigint, price: bigint, remaining: bigint): bigint {
+  const SCALING = 1_000_000_000n;
+  const fill = (payBudget * SCALING) / price;
+  return fill > remaining ? remaining : fill;
+}
+```
+
+### Overflow Protection
+
+All intermediate math uses `u128`. The maximum safe values:
+
+```
+Max fill_amount:  u64::MAX = 18,446,744,073,709,551,615
+Max price:        u64::MAX = 18,446,744,073,709,551,615
+Product:          u128 — safe up to 3.4e38 (no overflow possible with u64 inputs)
+```
+
+### Worked Examples
+
+| fill_amount | price | payment (ceil) | Notes |
+|---|---|---|---|
+| 10,000,000,000 (10 SUI) | 2,000,000,000 (2.0) | 20,000,000,000 (20 USDC) | Clean division |
+| 500,000,000 (0.5 SUI) | 1,500,000,000 (1.5) | 750,000,000 (0.75 USDC) | Clean |
+| 1 | 1,500,000,001 | 2 | Ceiling: 1.500000001 → 2 |
+| 100 | 1,500,000,000 | 150 | 100 × 1.5 = 150 |
+| 333 | 1,000,000,001 | 334 | Ceiling rounds up |
+
+### Dust Prevention
+
+After a partial fill, the remaining balance must be ≥ `min_fill_amount`.
+If `remaining - fill_amount > 0 && remaining - fill_amount < min_fill_amount`, the fill aborts.
+
+Routers must check this constraint before submitting:
+```typescript
+const wouldRemain = remaining - fillAmount;
+if (wouldRemain > 0n && wouldRemain < minFillAmount) {
+  // This fill would leave dust — either fill more or fill all
+}
+```
+
+
+---
+
+## 🎯 Where Davy Fits (Sui Ecosystem)
+
+### The One-Liner
+
+> **DeepBook = venue. Aggregators = routers. Davy = coordination primitive.**
+
+### Detailed Positioning
+
+| Layer | Examples | What Davy Is/Isn't |
+|---|---|---|
+| **Venue / Engine** | DeepBook | Davy is NOT a venue. Offers coexist with DeepBook orders. |
+| **Aggregator / Router** | Cetus Plus, 7K, FlowX | Davy is a SOURCE that aggregators can tap via quote helpers. |
+| **OTC / RFQ** | (none on Sui) | Davy IS the on-chain RFQ primitive. Conditional offers with lifecycle. |
+| **Intent / Solver** | (none shipping) | Davy provides escrowed, cancellable intents with delegated execution. |
+
+### "Why not just use DeepBook?"
+
+DeepBook is a shared-state orderbook engine. It's excellent for continuous
+price-time-priority matching. But:
+
+1. **DeepBook orders don't have lifecycle management** — no conditional expiry,
+   no fill policy control, no explicit state machine.
+2. **DeepBook doesn't have intent-driven execution** — no escrowed intents,
+   no delegated execution via capability objects.
+3. **DeepBook is a venue.** Davy is a coordination layer that can route TO
+   DeepBook (or Cetus, or any venue) when the venue offers better price.
+
+A router that integrates both Davy and DeepBook gives users the best of
+both worlds: conditional, lifecycle-managed liquidity from Davy alongside
+deep continuous liquidity from DeepBook.
+
+### How a Router Uses Davy
+
+```
+1. Intent created (user escrows payment)
+2. Router queries: Davy offers vs DeepBook price vs Cetus price
+3. Best source wins → executor fills via Davy or routes to venue
+4. Settlement: OfferAsset → creator, PayAsset → maker, refund → creator
+5. Event trace emitted for audit
+```
+
+
+---
+
+## 📋 Function Reference (Complete)
+
+### offer.move
+
+| Function | Description | Added |
+|---|---|---|
+| `create<O,W>()` | Create new offer, escrow OfferAsset | Phase 1 |
+| `fill_full<O,W>()` | Low-level full fill primitive | Phase 2 |
+| `fill_partial<O,W>()` | Low-level partial fill primitive | Phase 2 |
+| `fill_full_and_settle<O,W>()` | Atomic full fill + settlement | Phase 2 |
+| `fill_partial_and_settle<O,W>()` | Atomic partial fill + settlement | Phase 2 |
+| `withdraw<O,W>()` | Maker withdraws remaining, terminalizes | Phase 1 |
+| `expire<O,W>()` | Permissionless expiry, returns to maker | Phase 1 |
+| `remaining_amount<O,W>()` | View remaining balance | Phase 1 |
+| `status<O,W>()` | View status | Phase 1 |
+| `is_fillable<O,W>()` | View fillability | Phase 1 |
+| `price_bounds<O,W>()` | View min/max price | Phase 1 |
+| `maker<O,W>()` | View maker address | Phase 1 |
+| **`quote_pay_amount<O,W>()`** | **Quote: fill_amount → payment (ceiling)** | **Phase 7** |
+| **`quote_fill_amount<O,W>()`** | **Quote: pay_budget → max fill (floor)** | **Phase 7** |
+
+### intent.move
+
+| Function | Description |
+|---|---|
+| `create_price_bounded<R,P>()` | Create intent, escrow PayAsset |
+| `execute_against_offer<R,P>()` | Execute against single offer (ExecutorCap, dual-sided price) |
+| `cancel<R,P>()` | Creator cancels, returns escrow |
+| `expire_intent<R,P>()` | Permissionless expiry, returns escrow |
+| `is_pending<R,P>()` | View pending status |
+| `creator<R,P>()` | View creator address |
+
+### capability.move
+
+| Function | Description |
+|---|---|
+| `mint_executor_cap()` | Mint ExecutorCap (requires AdminCap) |
+| `destroy_executor_cap()` | Revoke/destroy cap |
+| `transfer_executor_cap()` | Transfer cap |
+| `transfer_admin_cap()` | Transfer AdminCap (caution) |
+
+### pool.move
+
+| Function | Description | Changed |
+|---|---|---|
+| `create<O,W>()` | Create empty pool | — |
+| `add_offer<O,W>()` | Add offer ID to index | **Phase 7: emits event** |
+| `remove_offer<O,W>()` | Remove offer ID from index | **Phase 7: emits event** |
+| `offer_ids<O,W>()` | List all IDs | — |
+| `size<O,W>()` | Pool size | — |
+| `contains<O,W>()` | Membership check | — |
+
+### events.move (Phase 7 additions)
+
+| Event | When | Key Fields |
+|---|---|---|
+| **`OfferAddedToPool`** | Offer added to pool | pool_id, offer_id, added_by |
+| **`OfferRemovedFromPool`** | Offer removed from pool | pool_id, offer_id, removed_by |
+
