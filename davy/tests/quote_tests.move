@@ -36,9 +36,9 @@ module davy::quote_tests {
                 coin,
                 1_500_000_000,  // min_price: 1.5 USDC/SUI
                 3_000_000_000,  // max_price: 3.0 USDC/SUI
+                clock::timestamp_ms(clock) + 3_600_000, // expiry
                 1,              // fill_policy: partial allowed
                 1_000_000_000,  // min_fill: 1 SUI
-                clock::timestamp_ms(clock) + 3_600_000, // 1hr
                 clock,
                 ts::ctx(scenario),
             );
@@ -108,9 +108,9 @@ module davy::quote_tests {
                 coin,
                 1_000_000_000,  // min: 1.0
                 5_000_000_000,  // max: 5.0
+                clock::timestamp_ms(&clock) + 3_600_000,
                 1,              // partial
                 1,              // min_fill: 1 unit (tiny)
-                clock::timestamp_ms(&clock) + 3_600_000,
                 &clock,
                 ts::ctx(&mut scenario),
             );
@@ -271,7 +271,7 @@ module davy::quote_tests {
     // =========================================================================
 
     #[test]
-    #[expected_failure(abort_code = 107, location = davy::errors)] // EPRICE_TOO_LOW
+    #[expected_failure(abort_code = 107, location = davy::offer)] // EPRICE_TOO_LOW
     /// Price below min_price → abort
     fun test_quote_pay_price_too_low() {
         let mut scenario = ts::begin(MAKER);
@@ -294,7 +294,7 @@ module davy::quote_tests {
     }
 
     #[test]
-    #[expected_failure(abort_code = 108, location = davy::errors)] // EPRICE_TOO_HIGH
+    #[expected_failure(abort_code = 108, location = davy::offer)] // EPRICE_TOO_HIGH
     /// Price above max_price → abort
     fun test_quote_pay_price_too_high() {
         let mut scenario = ts::begin(MAKER);
@@ -317,7 +317,7 @@ module davy::quote_tests {
     }
 
     #[test]
-    #[expected_failure(abort_code = 110, location = davy::errors)] // EPARTIAL_FILL_NOT_ALLOWED
+    #[expected_failure(abort_code = 110, location = davy::offer)] // EPARTIAL_FILL_NOT_ALLOWED
     /// Partial fill on full-only offer → abort
     fun test_quote_pay_partial_on_full_only() {
         let mut scenario = ts::begin(MAKER);
@@ -331,9 +331,9 @@ module davy::quote_tests {
                 coin,
                 1_500_000_000,
                 3_000_000_000,
+                clock::timestamp_ms(&clock) + 3_600_000,
                 0,              // fill_policy: FULL ONLY
                 1_000_000_000,
-                clock::timestamp_ms(&clock) + 3_600_000,
                 &clock,
                 ts::ctx(&mut scenario),
             );
@@ -354,7 +354,7 @@ module davy::quote_tests {
     }
 
     #[test]
-    #[expected_failure(abort_code = 113, location = davy::errors)] // EWOULD_LEAVE_DUST
+    #[expected_failure(abort_code = 113, location = davy::offer)] // EWOULD_LEAVE_DUST
     /// Dust prevention: fill would leave remainder < min_fill_amount
     fun test_quote_pay_dust_prevention() {
         let mut scenario = ts::begin(MAKER);

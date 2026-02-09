@@ -25,6 +25,7 @@ module davy::offer {
 
     use davy::errors;
     use davy::events;
+    use std::type_name;
 
     // ===== Status Constants =====
 
@@ -148,8 +149,12 @@ module davy::offer {
 
         let offer_id = object::id(&offer);
 
+
         events::emit_offer_created(
-            offer_id, maker, offer_amount,
+            offer_id, maker,
+            type_name::get<OfferAsset>(),
+            type_name::get<WantAsset>(),
+            offer_amount,
             min_price, max_price, expiry_timestamp_ms,
             fill_policy, min_fill_amount,
         );
@@ -395,7 +400,6 @@ module davy::offer {
 
     // ===== fill_full_and_settle — atomic =====
 
-    #[allow(lint(self_transfer))]
     /// Atomic full fill + settlement.
     /// Sends OfferAsset to taker, WantAsset (payment) to maker.
     public fun fill_full_and_settle<OfferAsset, WantAsset>(
@@ -417,7 +421,6 @@ module davy::offer {
 
     // ===== fill_partial_and_settle — atomic =====
 
-    #[allow(lint(self_transfer))]
     /// Atomic partial fill + settlement.
     /// Sends OfferAsset to taker, WantAsset (payment) to maker.
     public fun fill_partial_and_settle<OfferAsset, WantAsset>(
@@ -567,7 +570,7 @@ module davy::offer {
         // Status guard (no clock check — caller responsibility)
         assert!(
             offer.status == STATUS_CREATED || offer.status == STATUS_PARTIALLY_FILLED,
-            errors::invalid_status_for_fill()
+            errors::offer_not_fillable()
         );
 
         // Amount guards
@@ -623,7 +626,7 @@ module davy::offer {
         // Status guard
         assert!(
             offer.status == STATUS_CREATED || offer.status == STATUS_PARTIALLY_FILLED,
-            errors::invalid_status_for_fill()
+            errors::offer_not_fillable()
         );
 
         assert!(pay_budget > 0, errors::zero_amount());

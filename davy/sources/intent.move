@@ -14,6 +14,7 @@ module davy::intent {
     use davy::capability::{ExecutorCap};
     use davy::errors;
     use davy::events;
+    use std::type_name;
 
     // ===== Constants =====
 
@@ -78,6 +79,8 @@ module davy::intent {
         events::emit_intent_submitted(
             intent_id,
             creator,
+            type_name::get<ReceiveAsset>(),
+            type_name::get<PayAsset>(),
             receive_amount,
             payment_amount,  // max_pay_amount (conceptually)
             payment_amount,  // escrowed_amount (actual balance)

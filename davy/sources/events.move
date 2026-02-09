@@ -11,12 +11,15 @@
 ///   - Pool events: PoolCreated, OfferAddedToPool, OfferRemovedFromPool
 module davy::events {
     use sui::event;
+    use std::type_name::TypeName;
 
     // ===== Offer Events =====
 
     public struct OfferCreated has copy, drop {
         offer_id: ID,
         maker: address,
+        offer_asset: TypeName,
+        want_asset: TypeName,
         initial_offer_amount: u64,
         min_price: u64,
         max_price: u64,
@@ -53,6 +56,8 @@ module davy::events {
     public struct IntentSubmitted has copy, drop {
         intent_id: ID,
         creator: address,
+        receive_asset: TypeName,
+        pay_asset: TypeName,
         receive_amount: u64,
         max_pay_amount: u64,
         escrowed_amount: u64,
@@ -137,6 +142,8 @@ module davy::events {
     public fun emit_offer_created(
         offer_id: ID,
         maker: address,
+        offer_asset: TypeName,
+        want_asset: TypeName,
         initial_offer_amount: u64,
         min_price: u64,
         max_price: u64,
@@ -145,9 +152,9 @@ module davy::events {
         min_fill_amount: u64,
     ) {
         event::emit(OfferCreated {
-            offer_id, maker, initial_offer_amount,
-            min_price, max_price, expiry_timestamp_ms,
-            fill_policy, min_fill_amount,
+            offer_id, maker, offer_asset, want_asset,
+            initial_offer_amount, min_price, max_price,
+            expiry_timestamp_ms, fill_policy, min_fill_amount,
         });
     }
 
@@ -190,6 +197,8 @@ module davy::events {
     public fun emit_intent_submitted(
         intent_id: ID,
         creator: address,
+        receive_asset: TypeName,
+        pay_asset: TypeName,
         receive_amount: u64,
         max_pay_amount: u64,
         escrowed_amount: u64,
@@ -198,9 +207,9 @@ module davy::events {
         expiry_timestamp_ms: u64,
     ) {
         event::emit(IntentSubmitted {
-            intent_id, creator, receive_amount,
-            max_pay_amount, escrowed_amount, min_price, max_price,
-            expiry_timestamp_ms,
+            intent_id, creator, receive_asset, pay_asset,
+            receive_amount, max_pay_amount, escrowed_amount,
+            min_price, max_price, expiry_timestamp_ms,
         });
     }
 

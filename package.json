@@ -4,19 +4,24 @@
   "private": true,
   "type": "module",
   "workspaces": [
-    "dashboard"
+    "dashboard",
+    "davy-router",
+    "web"
   ],
   "scripts": {
-    "dev": "bun run --cwd dashboard dev",
+    "dev": "bun run --cwd web dev",
     "build": "bun run build:web && bun run build:sui",
-    "build:web": "bun run --cwd dashboard build",
+    "build:web": "bun run --cwd web build",
     "build:sui": "sui move build --path davy",
     "test": "bun run test:sui",
     "test:sui": "sui move test --path davy",
-    "lint": "bun run --cwd dashboard lint",
+    "lint": "bun run --cwd web lint",
     "deploy:sui": "sui client publish --gas-budget 100000000 --path davy"
   },
   "devDependencies": {
     "concurrently": "^9.1.0"
+  },
+  "dependencies": {
+    "@cetusprotocol/sui-clmm-sdk": "^1.4.0"
   }
 }
