@@ -2,17 +2,17 @@
 
 import * as React from 'react';
 import { TrendingUp, ArrowUpRight, ArrowDownRight, Star } from 'lucide-react';
-import { SuiIcon, UsdcIcon } from '@/components/icons';
+import { tokenIcons } from '@web3icons/react';
 import { cn } from '@/lib/utils';
 
 export function Ticker() {
     const trending = [
-        { name: 'SUI', price: '$0.9716', change: '-2.59%', isUp: false, icon: SuiIcon },
-        { name: 'USDC', price: '$1.0000', change: '+0.01%', isUp: true, icon: UsdcIcon },
-        { name: 'DEEP', price: '$0.0249', change: '-3.3%', isUp: false },
-        { name: 'NS', price: '$0.0193', change: '-0.96%', isUp: false },
-        { name: 'WBTC', price: '$70,095', change: '+1.89%', isUp: true },
-        { name: 'MAGMA', price: '$0.1078', change: '+6.72%', isUp: true },
+        { name: 'SUI', price: '$0.9716', change: '-2.59%', isUp: false, Icon: tokenIcons.TokenSUI },
+        { name: 'USDC', price: '$1.0000', change: '+0.01%', isUp: true, Icon: tokenIcons.TokenUSDC },
+        { name: 'USDT', price: '$1.0001', change: '+0.02%', isUp: true, Icon: tokenIcons.TokenUSDT },
+        { name: 'BTC', price: '$70,095', change: '+1.89%', isUp: true, Icon: tokenIcons.TokenBTC },
+        { name: 'ETH', price: '$3,842', change: '+2.14%', isUp: true, Icon: tokenIcons.TokenETH },
+        { name: 'SOL', price: '$148.2', change: '-1.25%', isUp: false, Icon: tokenIcons.TokenSOL },
     ];
 
     return (
@@ -28,7 +28,7 @@ export function Ticker() {
                     <div key={token.name} className="flex items-center gap-2 group cursor-pointer">
                         <span className="text-[10px] font-bold text-gray-600">#{i + 1}</span>
                         <div className="w-5 h-5 rounded-full bg-white/10 flex items-center justify-center">
-                            {token.icon ? <token.icon className="w-3.5 h-3.5" /> : <div className="w-3 h-3 rounded-full bg-blue-400" />}
+                            {token.Icon ? <token.Icon size={14} variant="mono" /> : <div className="w-3 h-3 rounded-full bg-blue-400" />}
                         </div>
                         <span className="text-xs font-bold text-gray-200 group-hover:text-cyan-400 transition-colors font-secondary">
                             {token.name}

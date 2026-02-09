@@ -1,184 +1,178 @@
-import { OfferCache } from './offer-cache';
-import { CachedIntent, RoutingDecision, OfferStatus, FillPolicy } from './types';
-import { quotePayAmount, quoteFillAmount, wouldLeaveDust } from './math';
-
 /**
- * Davy Protocol — Execution Logic
+ * Davy Protocol — Router
  *
- * This class simulates a smart router (like Cetus Plus or 7K) navigating the fragmented
- * liquidity landscape.
+ * Core routing logic: given an intent, compare Davy offers against
+ * external price sources (DeepBook, Cetus) and pick the best execution path.
  *
- * Goals:
- * 1. Find cheapest source (Davy offers vs External pool price)
- * 2. Comply with intent constraints (escrowed amount, max_pay, min/max price)
- * 3. Emit a routing decision
+ * This is a REFERENCE implementation. Production routers would:
+ * - Use real Sui RPC for DeepBook/Cetus price queries
+ * - Handle multi-hop routing
+ * - Support splitting across sources
+ * - Implement gas optimization
  */
-export class DavyRouter {
-    private cache: OfferCache;
 
-    constructor(cache: OfferCache) {
-        this.cache = cache;
-    }
+import { OfferCache } from './offer-cache.js';
+import { CachedIntent, CachedOffer, RoutingDecision, FillPolicy } from './types.js';
+import { quotePayAmount, quoteFillAmount, wouldLeaveDust } from './math.js';
+
+/** External price source interface (mock for reference) */
+export interface ExternalPriceSource {
+    name: string;
+    /** Get best available price for asset pair. Returns null if no liquidity. */
+    getPrice(offerAssetType: string, wantAssetType: string, amount: bigint): Promise<bigint | null>;
+}
+
+export class DavyRouter {
+    constructor(
+        private offerCache: OfferCache,
+        private externalSources: ExternalPriceSource[] = [],
+    ) { }
 
     /**
-     * Main entry point: determine best execution for an incoming intent.
+     * Route an intent: find the best execution path.
      *
-     * @param intent The user's execution intent
-     * @param nowMs Current timestamp (indexer simulation)
+     * Flow:
+     * 1. Query Davy offers matching the intent's asset pair
+     * 2. For each offer, compute the cost to fill the intent's receive_amount
+     * 3. Query external sources for comparison
+     * 4. Pick the cheapest source
+     * 5. Return routing decision
      */
     async routeIntent(intent: CachedIntent, nowMs: number): Promise<RoutingDecision> {
-        // 1. Find Davy offers for the intent's pair
-        let bestDavy = this.findBestDavyOffer(intent, nowMs);
-
-        // 2. Simulate querying external aggregators (DeepBook, Cetus)
+        const davyBest = this.findBestDavyOffer(intent, nowMs);
         const externalBest = await this.findBestExternalPrice(intent);
 
-        // 3. Compare and select
-        if (!bestDavy) {
+        // No Davy offers available
+        if (!davyBest) {
             if (!externalBest) {
                 return {
                     source: 'skip',
                     fillAmount: 0n,
                     paymentAmount: 0n,
                     effectivePrice: 0n,
-                    reason: 'No liquidity available within price bounds.',
+                    reason: 'No liquidity available from any source',
                 };
             }
-            // No Davy, use external
             return externalBest;
         }
 
-        if (externalBest) {
-            // Compare effective price (lower is better for payer)
-            // PayAsset per 1 ReceiveAsset (lower payment is better)
-            if (externalBest.paymentAmount < bestDavy.paymentAmount) {
-                return externalBest;
-            }
+        // No external sources available — use Davy
+        if (!externalBest) {
+            return davyBest;
         }
 
-        // Default to Davy if it's best or only option
-        return bestDavy;
+        // Compare: lowest payment wins
+        if (davyBest.paymentAmount <= externalBest.paymentAmount) {
+            return {
+                ...davyBest,
+                reason: `Davy wins: ${davyBest.paymentAmount} vs ${externalBest.source} ${externalBest.paymentAmount}`,
+            };
+        } else {
+            return {
+                ...externalBest,
+                reason: `${externalBest.source} wins: ${externalBest.paymentAmount} vs Davy ${davyBest.paymentAmount}`,
+            };
+        }
     }
 
     /**
-     * Find the single best Davy offer that satisfies the intent.
-     * "Best" = lowest payment required for the requested amount.
+     * Find the best Davy offer to fill an intent.
+     * Tries each fillable offer and picks the one with lowest payment.
      */
-    private findBestDavyOffer(intent: CachedIntent, nowMs: number): RoutingDecision | null {
-        const candidates = this.cache.findCandidates(
+    private findBestDavyOffer(
+        intent: CachedIntent,
+        nowMs: number,
+    ): RoutingDecision | null {
+        const offers = this.offerCache.findFillableOffers(
             intent.receiveAssetType,
             intent.payAssetType,
-            nowMs
+            nowMs,
         );
 
-        let bestOfferDecision: RoutingDecision | null = null;
-        let minPayment = BigInt((2n ** 64n).toString()); // Start high
+        let bestDecision: RoutingDecision | null = null;
 
-        for (const offer of candidates) {
-            // Price check: offer.min_price ≤ intent.max_price
-            // AND intent.min_price ≤ offer.max_price
-            // (Overlap check)
-            //
-            // In reality, we just want the lowest payment.
-            // The offer's price is determined by the maker's bounds.
-            // We'll optimistically try to fill at `offer.min_price` (best case for taker).
-            // However, to be safe, let's assume worst-case (max_price) for guarantee.
-            //
-            // For this reference impl, let's simulate a market price P where:
-            // P = max(offer.min_price, intent.min_price)
-            // If P > offer.max_price or P > intent.max_price, no deal.
+        for (const offer of offers) {
+            const decision = this.evaluateOffer(offer, intent);
+            if (!decision) continue;
 
-            const executionPrice = offer.minPrice > intent.minPrice ? offer.minPrice : intent.minPrice;
-
-            if (executionPrice > offer.maxPrice || executionPrice > intent.maxPrice) {
-                continue;
+            if (!bestDecision || decision.paymentAmount < bestDecision.paymentAmount) {
+                bestDecision = decision;
             }
+        }
 
-            // Calculate fill potential
-            // 1. How much does user want?
-            let fillAmount = intent.receiveAmount;
+        return bestDecision;
+    }
 
-            // 2. Is offer enough?
-            if (offer.remainingAmount < fillAmount) {
-                if (offer.fillPolicy === FillPolicy.FullOnly) {
-                    continue; // Can't partial fill a full-only offer
-                }
-                fillAmount = offer.remainingAmount; // Partial fill
-            }
+    /**
+     * Evaluate a single Davy offer against an intent.
+     * Returns null if the offer can't satisfy the intent.
+     */
+    private evaluateOffer(offer: CachedOffer, intent: CachedIntent): RoutingDecision | null {
+        const fillAmount = intent.receiveAmount;
 
-            // 3. Check min fill constraints
-            if (fillAmount < offer.minFillAmount) {
-                continue;
-            }
+        // Can this offer fill the full intent amount?
+        if (fillAmount > offer.remainingAmount) return null;
 
-            // 4. Check dust
-            if (wouldLeaveDust(offer.remainingAmount, fillAmount, offer.minFillAmount)) {
-                continue;
-            }
+        // Is this a partial fill on a full-only offer?
+        if (fillAmount < offer.remainingAmount && offer.fillPolicy === FillPolicy.FullOnly) return null;
 
-            // 5. Calculate payment
-            const payment = quotePayAmount(fillAmount, executionPrice);
+        // Would this leave dust?
+        if (fillAmount < offer.remainingAmount) {
+            if (fillAmount < offer.minFillAmount) return null;
+            if (wouldLeaveDust(offer.remainingAmount, fillAmount, offer.minFillAmount)) return null;
+        }
 
-            // 6. Check intent budget
-            // The user escrowed `intent.escrowedAmount`. They are willing to pay up to `intent.maxPayAmount`.
-            // The payment must not exceed either.
-            if (payment > intent.escrowedAmount || payment > intent.maxPayAmount) {
-                continue;
-            }
+        // Try pricing at offer's min_price (best for taker)
+        const price = offer.minPrice;
 
-            // Is this better than current best?
-            if (payment < minPayment) {
-                minPayment = payment;
-                bestOfferDecision = {
-                    source: 'davy',
-                    offerId: offer.offerId,
-                    fillAmount,
-                    paymentAmount: payment,
-                    effectivePrice: executionPrice,
-                    reason: 'Best on-chain offer found.',
+        // Check intent price bounds
+        if (price < intent.minPrice || price > intent.maxPrice) return null;
+
+        // Quote payment
+        const paymentAmount = quotePayAmount(fillAmount, price);
+
+        // Check against intent's max_pay
+        if (paymentAmount > intent.maxPayAmount) return null;
+
+        return {
+            source: 'davy',
+            offerId: offer.offerId,
+            fillAmount,
+            paymentAmount,
+            effectivePrice: price,
+            reason: `Davy offer ${offer.offerId.slice(0, 8)}... at price ${price}`,
+        };
+    }
+
+    /** Query external sources for comparison pricing */
+    private async findBestExternalPrice(intent: CachedIntent): Promise<RoutingDecision | null> {
+        let best: RoutingDecision | null = null;
+
+        for (const source of this.externalSources) {
+            const price = await source.getPrice(
+                intent.receiveAssetType,
+                intent.payAssetType,
+                intent.receiveAmount,
+            );
+
+            if (!price) continue;
+
+            const paymentAmount = quotePayAmount(intent.receiveAmount, price);
+
+            if (paymentAmount > intent.maxPayAmount) continue;
+            if (price < intent.minPrice || price > intent.maxPrice) continue;
+
+            if (!best || paymentAmount < best.paymentAmount) {
+                best = {
+                    source: source.name as RoutingDecision['source'],
+                    fillAmount: intent.receiveAmount,
+                    paymentAmount,
+                    effectivePrice: price,
+                    reason: `${source.name} at price ${price}`,
                 };
             }
         }
 
-        return bestOfferDecision;
-    }
-
-    /**
-     * Mock external aggregator query.
-     * Simulates finding a price on DeepBook or Cetus.
-     */
-    private async findBestExternalPrice(intent: CachedIntent): Promise<RoutingDecision | null> {
-        // Simulate a random external price check
-        // In a real router, this would call the aggregator API/SDK.
-
-        // 50% chance of finding liquidity
-        if (Math.random() > 0.5) {
-            return null;
-        }
-
-        // Generate a random price around the intent's min price
-        // Variation: +/- 5%
-        const basePrice = Number(intent.minPrice);
-        const randomVariation = 0.95 + Math.random() * 0.10;
-        const externalPrice = BigInt(Math.floor(basePrice * randomVariation));
-
-        if (externalPrice > intent.maxPrice) {
-            return null; // Too expensive
-        }
-
-        const fillAmount = intent.receiveAmount;
-        const payment = quotePayAmount(fillAmount, externalPrice);
-
-        if (payment > intent.escrowedAmount) {
-            return null;
-        }
-
-        return {
-            source: 'deepbook', // Placeholder
-            fillAmount,
-            paymentAmount: payment,
-            effectivePrice: externalPrice,
-            reason: 'External aggregator offered better price.',
-        };
+        return best;
     }
 }

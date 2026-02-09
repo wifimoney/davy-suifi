@@ -1,99 +1,162 @@
-import { DavyRouter } from './router';
-import { OfferCache } from './offer-cache';
-import { CachedOffer, CachedIntent, OfferStatus, FillPolicy } from './types';
-
 /**
  * Davy Protocol — Router Demo
  *
- * Simulates an end-to-end execution flow:
- * 1. Populate mock offer cache (representing indexed on-chain state)
- * 2. Create a user intent (representing a `create_price_bounded` TX)
- * 3. Route the intent to find the best execution path
- * 4. Print the execution trace
+ * End-to-end flow:
+ * 1. Populate offer cache (simulates indexer)
+ * 2. Create an intent
+ * 3. Route: compare Davy vs mock DeepBook
+ * 4. Print execution trace
+ *
+ * Run: npx tsx src/demo.ts
  */
 
-async function main() {
-    console.log('--- Davy Protocol Router Demo ---\n');
+import { OfferCache } from './offer-cache.js';
+import { DavyRouter, ExternalPriceSource } from './router.js';
+import { CachedIntent, ExecutionTrace } from './types.js';
+import { quotePayAmount, quoteFillAmount, calcPayment, PRICE_SCALING_FACTOR } from './math.js';
 
-    // 1. Initialize Cache
-    const cache = new OfferCache();
-    const router = new DavyRouter(cache);
+// ============================================================
+// 1. Mock DeepBook price source
+// ============================================================
 
-    // 2. Mock Data: Offers
-    const offers: CachedOffer[] = [
-        {
-            offerId: '0xabc123...',
-            maker: '0xmaker1...',
-            offerAssetType: 'SUI',
-            wantAssetType: 'USDC',
-            initialAmount: 10_000_000_000n, // 10 SUI
-            remainingAmount: 5_000_000_000n, // 5 SUI remaining
-            minPrice: 980_000_000n, // 0.98 USDC/SUI (Competitive!)
-            maxPrice: 1_200_000_000n, // 1.2 USDC/SUI
-            fillPolicy: FillPolicy.PartialAllowed,
-            minFillAmount: 1_000_000_000n, // 1 SUI
-            expiryTimestampMs: Date.now() + 3600_000,
-            status: OfferStatus.PartiallyFilled,
-            totalFilled: 5_000_000_000n,
-            fillCount: 1,
-        },
-        {
-            offerId: '0xdef456...',
-            maker: '0xmaker2...',
-            offerAssetType: 'SUI',
-            wantAssetType: 'USDC',
-            initialAmount: 20_000_000_000n, // 20 SUI
-            remainingAmount: 20_000_000_000n, // 20 SUI full
-            minPrice: 950_000_000n, // 0.95 USDC/SUI (Even cheaper!)
-            maxPrice: 1_900_000_000n, // 1.9 USDC/SUI
-            fillPolicy: FillPolicy.FullOnly,
-            minFillAmount: 20_000_000_000n, // Must take all 20
-            expiryTimestampMs: Date.now() + 3600_000,
-            status: OfferStatus.Created,
-            totalFilled: 0n,
-            fillCount: 0,
-        },
-    ];
+const mockDeepBook: ExternalPriceSource = {
+    name: 'deepbook',
+    async getPrice(_offerAsset, _wantAsset, _amount) {
+        // Simulate DeepBook offering 2.05 USDC/SUI
+        return 2_050_000_000n;
+    },
+};
 
-    offers.forEach(o => cache.upsert(o));
-    console.log(`Initialized cache with ${offers.length} offers.`);
+// ============================================================
+// 2. Setup
+// ============================================================
 
-    // 3. Create Intent (User wants 5 SUI, willing to pay up to 2.0 USDC/SUI)
-    const intent: CachedIntent = {
-        intentId: '0xintent789...',
-        creator: '0xtaker1...',
-        receiveAssetType: 'SUI',
-        payAssetType: 'USDC',
-        receiveAmount: 5_000_000_000n, // 5 SUI
-        maxPayAmount: 10_000_000_000n, // Max budget: 10 USDC (implied 2.0 price)
-        escrowedAmount: 10_000_000_000n, // Fully funded
-        minPrice: 1_000_000_000n, // 1.0 min
-        maxPrice: 2_000_000_000n, // 2.0 max
-        expiryTimestampMs: Date.now() + 600_000, // 10m expiry
-        status: 'pending',
-    };
+const cache = new OfferCache();
+const router = new DavyRouter(cache, [mockDeepBook]);
 
-    console.log(`\nProcessing Intent ${intent.intentId}:`);
-    console.log(`  Generic: Want 5 SUI for max 10 USDC (Price limit: 2.0)`);
+console.log('🏴☠️ Davy Router Reference — Demo');
+console.log('='.repeat(50));
 
-    // 4. Route
-    const decision = await router.routeIntent(intent, Date.now());
+// ============================================================
+// 3. Populate offer cache (simulates indexer events)
+// ============================================================
 
-    // 5. Output Result
-    console.log('\n--- Routing Decision ---');
-    console.log(`Source:         ${decision.source.toUpperCase()}`);
-    if (decision.offerId) {
-        console.log(`Offer ID:       ${decision.offerId}`);
-    }
-    console.log(`Fill Amount:    ${Number(decision.fillAmount) / 1e9} SUI`);
-    console.log(`Payment Amount: ${Number(decision.paymentAmount) / 1e9} USDC`);
-    console.log(`Effective Price: ${Number(decision.effectivePrice) / 1e9} USDC/SUI`);
-    console.log(`Reason:         ${decision.reason}`);
+console.log('\n📦 Populating offer cache from events...\n');
 
-    // Explanation of logic:
-    // Offer 1 (0xabc...): 5 SUI available @ 1.5 USDC. Cost = 7.5 USDC.
-    // Offer 2 (0xdef...): 20 SUI available @ 1.45 USDC. FULL ONLY. User only wants 5. Skipped.
-    // External: Random mock. If strict < 1.5, it might win.
-}
+// Offer A: 100 SUI at 1.8–2.2 USDC/SUI (competitive)
+cache.onOfferCreated({
+    offerId: '0xAAAA0001',
+    maker: '0xMAKER_A',
+    offerAssetType: '0x2::sui::SUI',
+    wantAssetType: '0xUSDC::usdc::USDC',
+    initialAmount: 100_000_000_000n, // 100 SUI
+    minPrice: 1_800_000_000n,        // 1.80
+    maxPrice: 2_200_000_000n,        // 2.20
+    fillPolicy: 1,                   // partial allowed
+    minFillAmount: 1_000_000_000n,   // 1 SUI min
+    expiryTimestampMs: Date.now() + 3_600_000,
+});
+console.log('  Offer A: 100 SUI @ 1.80–2.20 USDC/SUI (partial ok)');
 
-main().catch(console.error);
+// Offer B: 50 SUI at 2.0–2.5 USDC/SUI (more expensive)
+cache.onOfferCreated({
+    offerId: '0xBBBB0002',
+    maker: '0xMAKER_B',
+    offerAssetType: '0x2::sui::SUI',
+    wantAssetType: '0xUSDC::usdc::USDC',
+    initialAmount: 50_000_000_000n,
+    minPrice: 2_000_000_000n,
+    maxPrice: 2_500_000_000n,
+    fillPolicy: 1,
+    minFillAmount: 5_000_000_000n,
+    expiryTimestampMs: Date.now() + 7_200_000,
+});
+console.log('  Offer B: 50 SUI @ 2.00–2.50 USDC/SUI (partial ok)');
+
+// Offer C: expired (should be filtered out)
+cache.onOfferCreated({
+    offerId: '0xCCCC0003',
+    maker: '0xMAKER_C',
+    offerAssetType: '0x2::sui::SUI',
+    wantAssetType: '0xUSDC::usdc::USDC',
+    initialAmount: 200_000_000_000n,
+    minPrice: 1_500_000_000n,
+    maxPrice: 1_600_000_000n,
+    fillPolicy: 0,
+    minFillAmount: 200_000_000_000n,
+    expiryTimestampMs: Date.now() - 1000, // already expired
+});
+console.log('  Offer C: 200 SUI @ 1.50–1.60 (EXPIRED — should be filtered)\n');
+
+console.log(`  Cache size: ${cache.size} offers\n`);
+
+// ============================================================
+// 4. Create intent
+// ============================================================
+
+const intent: CachedIntent = {
+    intentId: '0xINTENT_001',
+    creator: '0xTAKER',
+    receiveAssetType: '0x2::sui::SUI',
+    payAssetType: '0xUSDC::usdc::USDC',
+    receiveAmount: 10_000_000_000n,   // wants 10 SUI
+    maxPayAmount: 25_000_000_000n,    // willing to pay up to 25 USDC
+    escrowedAmount: 25_000_000_000n,  // 25 USDC escrowed
+    minPrice: 1_500_000_000n,         // accepts 1.50+ USDC/SUI
+    maxPrice: 2_500_000_000n,         // accepts up to 2.50
+    expiryTimestampMs: Date.now() + 1_800_000,
+    status: 'pending',
+};
+
+console.log('📝 Intent: Buy 10 SUI, willing to pay up to 25 USDC');
+console.log(`   Price bounds: 1.50–2.50 USDC/SUI\n`);
+
+// ============================================================
+// 5. Route
+// ============================================================
+
+console.log('🔄 Routing...\n');
+
+const decision = await router.routeIntent(intent, Date.now());
+
+console.log('📊 Routing Decision:');
+console.log(`   Source:    ${decision.source}`);
+console.log(`   Fill:      ${Number(decision.fillAmount) / 1e9} SUI`);
+console.log(`   Payment:   ${Number(decision.paymentAmount) / 1e9} USDC`);
+console.log(`   Price:     ${Number(decision.effectivePrice) / 1e9} USDC/SUI`);
+console.log(`   Reason:    ${decision.reason}\n`);
+
+// ============================================================
+// 6. Execution trace
+// ============================================================
+
+const trace: ExecutionTrace = {
+    intentId: intent.intentId,
+    decision,
+    timestamp: Date.now(),
+};
+
+console.log('📋 Execution Trace:');
+console.log(JSON.stringify(trace, (_, v) => typeof v === 'bigint' ? v.toString() : v, 2));
+
+// ============================================================
+// 7. Math verification
+// ============================================================
+
+console.log('\n🧮 Math Verification:');
+console.log(`   PRICE_SCALING_FACTOR: ${PRICE_SCALING_FACTOR}`);
+
+const testFill = 10_000_000_000n;
+const testPrice = 1_800_000_000n;
+const payment = calcPayment(testFill, testPrice);
+console.log(`   calcPayment(10 SUI, 1.80) = ${Number(payment) / 1e9} USDC`);
+
+const budget = 20_000_000_000n;
+const maxFill = quoteFillAmount(budget, 2_000_000_000n, 100_000_000_000n);
+console.log(`   quoteFillAmount(20 USDC, 2.00, 100 remaining) = ${Number(maxFill) / 1e9} SUI`);
+
+const roundTrip = quotePayAmount(maxFill, 2_000_000_000n);
+console.log(`   quotePayAmount(${Number(maxFill) / 1e9} SUI, 2.00) = ${Number(roundTrip) / 1e9} USDC`);
+console.log(`   Round-trip budget check: ${roundTrip} <= ${budget} ? ${roundTrip <= budget}`);
+
+console.log('\n✅ Demo complete.\n');

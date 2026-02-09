@@ -39,9 +39,7 @@ export default function RootLayout({
         className={`${instrumentSans.variable} ${workSans.variable} ${pixelifySans.variable} antialiased bg-background text-foreground font-sans`}
       >
         <Providers>
-          <DashboardLayout>
-            {children}
-          </DashboardLayout>
+          {children}
         </Providers>
       </body>
     </html>

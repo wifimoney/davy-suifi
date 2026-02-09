@@ -217,7 +217,7 @@ module davy::offer_tests {
             offer::create<SUI, USDC>(
                 offer_coin,
                 1_000_000_000, 2_000_000_000, 5000,
-                2,  // invalid policy
+                3,  // invalid policy (0, 1, 2 are valid)
                 0, &clock, ctx,
             );
         };

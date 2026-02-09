@@ -94,57 +94,64 @@ price = (want_amount × 1,000,000,000) / offer_amount
 
 ---
 
-## Public API Reference
+## 📋 Function Reference (Complete)
 
 ### offer.move
 
-| Function | Description |
-|---|---|
-| `create<O,W>()` | Create offer, escrow OfferAsset. Returns `ID`. |
-| `fill_full_and_settle<O,W>()` | Atomic full fill + settlement. **Recommended.** |
-| `fill_partial_and_settle<O,W>()` | Atomic partial fill + settlement. **Recommended.** |
-| `fill_full<O,W>()` | Low-level full fill. Returns `FillReceipt`. |
-| `fill_partial<O,W>()` | Low-level partial fill. Returns `FillReceipt`. |
-| `withdraw<O,W>()` | Maker withdraws remaining. Destroys offer. |
-| `expire<O,W>()` | Permissionless expiry after timestamp. Destroys offer. |
-| `calculate_price()` | Compute 1e9-scaled price from amounts. |
-| `calc_payment()` | Compute required payment (rounds up). |
-| `remaining_amount()` | View remaining balance. |
-| `status()` | View offer status (0–4). |
-| `is_fillable()` | Check if offer is active and not expired. |
-| `price_bounds()` | View `(min_price, max_price)`. |
-| `maker()` | View maker address. |
+| Function | Description | Added |
+|---|---|---|
+| `create<O,W>()` | Create new offer, escrow OfferAsset | Phase 1 |
+| `fill_full<O,W>()` | Low-level full fill primitive | Phase 2 |
+| `fill_partial<O,W>()` | Low-level partial fill primitive | Phase 2 |
+| `fill_full_and_settle<O,W>()` | Atomic full fill + settlement | Phase 2 |
+| `fill_partial_and_settle<O,W>()` | Atomic partial fill + settlement | Phase 2 |
+| `withdraw<O,W>()` | Maker withdraws remaining, terminalizes | Phase 1 |
+| `expire<O,W>()` | Permissionless expiry, returns to maker | Phase 1 |
+| `remaining_amount<O,W>()` | View remaining balance | Phase 1 |
+| `status<O,W>()` | View status | Phase 1 |
+| `is_fillable<O,W>()` | View fillability | Phase 1 |
+| `price_bounds<O,W>()` | View min/max price | Phase 1 |
+| `maker<O,W>()` | View maker address | Phase 1 |
+| **`quote_pay_amount<O,W>()`** | **Quote: fill_amount → payment (ceiling)** | **Phase 7** |
+| **`quote_fill_amount<O,W>()`** | **Quote: pay_budget → max fill (floor)** | **Phase 7** |
 
 ### intent.move
 
 | Function | Description |
 |---|---|
-| `create_price_bounded<R,P>()` | Create intent, escrow PayAsset. |
-| `execute_against_offer<R,P>()` | Execute against single offer. Requires `ExecutorCap`. |
-| `cancel<R,P>()` | Creator cancels, returns escrow. |
-| `expire_intent<R,P>()` | Permissionless expiry, returns escrow. |
-| `intent_status()` | View status (0–3). |
-| `creator()` | View creator address. |
-| `escrowed_amount()` | View remaining escrowed balance. |
+| `create_price_bounded<R,P>()` | Create intent, escrow PayAsset |
+| `execute_against_offer<R,P>()` | Execute against single offer (ExecutorCap, dual-sided price) |
+| `cancel<R,P>()` | Creator cancels, returns escrow |
+| `expire_intent<R,P>()` | Permissionless expiry, returns escrow |
+| `is_pending<R,P>()` | View pending status |
+| `creator<R,P>()` | View creator address |
 
 ### capability.move
 
 | Function | Description |
 |---|---|
-| `mint_executor_cap()` | Mint ExecutorCap. Requires `AdminCap`. |
-| `destroy_executor_cap()` | Revoke/destroy an ExecutorCap. |
-| `transfer_executor_cap()` | Transfer cap to new owner. |
-| `transfer_admin_cap()` | Transfer AdminCap. **Use with caution.** |
+| `mint_executor_cap()` | Mint ExecutorCap (requires AdminCap) |
+| `destroy_executor_cap()` | Revoke/destroy cap |
+| `transfer_executor_cap()` | Transfer cap |
+| `transfer_admin_cap()` | Transfer AdminCap (caution) |
 
 ### pool.move
 
-| Function | Description |
-|---|---|
-| `create<O,W>()` | Create empty coordination pool. |
-| `add_offer<O,W>()` | Add offer ID to pool. Creator-only. |
-| `remove_offer<O,W>()` | Remove offer ID from pool. Creator-only. |
-| `contains()` | Check if offer ID is in pool. |
-| `size()` | Number of indexed offers. |
+| Function | Description | Changed |
+|---|---|---|
+| `create<O,W>()` | Create empty pool | — |
+| `add_offer<O,W>()` | Add offer ID to index | **Phase 7: emits event** |
+| `remove_offer<O,W>()` | Remove offer ID from index | **Phase 7: emits event** |
+| `offer_ids<O,W>()` | List all IDs | — |
+| `size<O,W>()` | Pool size | — |
+| `contains<O,W>()` | Membership check | — |
+
+### events.move (Phase 7 additions)
+
+| Event | When | Key Fields |
+|---|---|---|
+| **`OfferAddedToPool`** | Offer added to pool | pool_id, offer_id, added_by |
+| **`OfferRemovedFromPool`** | Offer removed from pool | pool_id, offer_id, removed_by |
 
 ---
 
@@ -375,65 +382,4 @@ deep continuous liquidity from DeepBook.
 5. Event trace emitted for audit
 ```
 
-
----
-
-## 📋 Function Reference (Complete)
-
-### offer.move
-
-| Function | Description | Added |
-|---|---|---|
-| `create<O,W>()` | Create new offer, escrow OfferAsset | Phase 1 |
-| `fill_full<O,W>()` | Low-level full fill primitive | Phase 2 |
-| `fill_partial<O,W>()` | Low-level partial fill primitive | Phase 2 |
-| `fill_full_and_settle<O,W>()` | Atomic full fill + settlement | Phase 2 |
-| `fill_partial_and_settle<O,W>()` | Atomic partial fill + settlement | Phase 2 |
-| `withdraw<O,W>()` | Maker withdraws remaining, terminalizes | Phase 1 |
-| `expire<O,W>()` | Permissionless expiry, returns to maker | Phase 1 |
-| `remaining_amount<O,W>()` | View remaining balance | Phase 1 |
-| `status<O,W>()` | View status | Phase 1 |
-| `is_fillable<O,W>()` | View fillability | Phase 1 |
-| `price_bounds<O,W>()` | View min/max price | Phase 1 |
-| `maker<O,W>()` | View maker address | Phase 1 |
-| **`quote_pay_amount<O,W>()`** | **Quote: fill_amount → payment (ceiling)** | **Phase 7** |
-| **`quote_fill_amount<O,W>()`** | **Quote: pay_budget → max fill (floor)** | **Phase 7** |
-
-### intent.move
-
-| Function | Description |
-|---|---|
-| `create_price_bounded<R,P>()` | Create intent, escrow PayAsset |
-| `execute_against_offer<R,P>()` | Execute against single offer (ExecutorCap, dual-sided price) |
-| `cancel<R,P>()` | Creator cancels, returns escrow |
-| `expire_intent<R,P>()` | Permissionless expiry, returns escrow |
-| `is_pending<R,P>()` | View pending status |
-| `creator<R,P>()` | View creator address |
-
-### capability.move
-
-| Function | Description |
-|---|---|
-| `mint_executor_cap()` | Mint ExecutorCap (requires AdminCap) |
-| `destroy_executor_cap()` | Revoke/destroy cap |
-| `transfer_executor_cap()` | Transfer cap |
-| `transfer_admin_cap()` | Transfer AdminCap (caution) |
-
-### pool.move
-
-| Function | Description | Changed |
-|---|---|---|
-| `create<O,W>()` | Create empty pool | — |
-| `add_offer<O,W>()` | Add offer ID to index | **Phase 7: emits event** |
-| `remove_offer<O,W>()` | Remove offer ID from index | **Phase 7: emits event** |
-| `offer_ids<O,W>()` | List all IDs | — |
-| `size<O,W>()` | Pool size | — |
-| `contains<O,W>()` | Membership check | — |
-
-### events.move (Phase 7 additions)
-
-| Event | When | Key Fields |
-|---|---|---|
-| **`OfferAddedToPool`** | Offer added to pool | pool_id, offer_id, added_by |
-| **`OfferRemovedFromPool`** | Offer removed from pool | pool_id, offer_id, removed_by |
 

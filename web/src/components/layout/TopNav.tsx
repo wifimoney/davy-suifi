@@ -52,15 +52,16 @@ export function TopNav() {
         <header className="fixed top-0 left-0 right-0 h-16 bg-[#0b0b0b] border-b border-white/5 z-50 flex items-center justify-between px-6">
             {/* Left section: Logo + Nav */}
             <div className="flex items-center gap-8">
-                <Link href="/" className="flex items-center gap-2">
-                    <div className="w-12 h-12 relative">
+                <Link href="/dashboard" className="flex items-center gap-3 group">
+                    <div className="w-10 h-10 relative">
                         {/* eslint-disable-next-line @next/next/no-img-element */}
                         <img
                             src="/logo.png"
                             alt="Davy Logo"
-                            className="w-full h-full object-contain pixelated scale-125"
+                            className="w-full h-full object-contain pixelated group-hover:scale-110 transition-transform duration-500"
                         />
                     </div>
+                    <span className="text-xl font-bold font-sans tracking-tightest italic text-white hidden sm:block">DAVY</span>
                 </Link>
 
                 <nav className="hidden md:flex items-center gap-1">

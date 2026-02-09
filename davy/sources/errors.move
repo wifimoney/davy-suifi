@@ -67,6 +67,15 @@ module davy::errors {
     const EMIN_FILL_EXCEEDS_AMOUNT: u64 = 118;
     public fun min_fill_exceeds_amount(): u64 { EMIN_FILL_EXCEEDS_AMOUNT }
 
+    const EPARTIAL_FILL_CAP_REQUIRED: u64 = 119;
+    public fun partial_fill_cap_required(): u64 { EPARTIAL_FILL_CAP_REQUIRED }
+
+    const EINVALID_STATUS_FOR_FILL: u64 = 120;
+    public fun invalid_status_for_fill(): u64 { EINVALID_STATUS_FOR_FILL }
+
+    const EZERO_PRICE: u64 = 121;
+    public fun zero_price(): u64 { EZERO_PRICE }
+
     // ===== Intent Errors (200-299) =====
 
     const EINTENT_NOT_PENDING: u64 = 200;

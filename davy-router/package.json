@@ -4,6 +4,9 @@
     "description": "Davy Protocol — off-chain router reference implementation. Proves that the Davy primitive composes into real execution outcomes.",
     "type": "module",
     "main": "dist/index.js",
+    "exports": {
+        ".": "./dist/index.js"
+    },
     "scripts": {
         "build": "tsc",
         "demo": "tsx src/demo.ts",

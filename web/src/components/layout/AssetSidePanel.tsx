@@ -9,7 +9,7 @@ import {
     ChevronDown
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { SuiIcon } from '@/components/icons';
+import { TokenSUI } from '@web3icons/react';
 import { cn } from '@/lib/utils';
 
 export function AssetSidePanel() {
@@ -36,7 +36,7 @@ export function AssetSidePanel() {
                 <div className="flex items-center justify-between">
                     <div className="flex items-center gap-3">
                         <div className="w-10 h-10 rounded-full bg-white/10 flex items-center justify-center">
-                            <SuiIcon className="w-7 h-7" />
+                            <TokenSUI size={28} variant="mono" />
                         </div>
                         <div>
                             <div className="flex items-center gap-1">

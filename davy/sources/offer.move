@@ -39,6 +39,7 @@ module davy::offer {
 
     const FILL_POLICY_FULL_ONLY: u8 = 0;
     const FILL_POLICY_PARTIAL_ALLOWED: u8 = 1;
+    const FILL_POLICY_PARTIAL_GATED: u8 = 2;
 
     // ===== Price Scaling =====
 
@@ -121,12 +122,14 @@ module davy::offer {
         assert!(max_price > 0, errors::zero_max_price());
         assert!(min_price <= max_price, errors::invalid_price_bounds());
         assert!(
-            fill_policy == FILL_POLICY_FULL_ONLY || fill_policy == FILL_POLICY_PARTIAL_ALLOWED,
+            fill_policy == FILL_POLICY_FULL_ONLY
+                || fill_policy == FILL_POLICY_PARTIAL_ALLOWED
+                || fill_policy == FILL_POLICY_PARTIAL_GATED,
             errors::invalid_fill_policy(),
         );
         assert!(expiry_timestamp_ms > now, errors::expired_on_create());
 
-        if (fill_policy == FILL_POLICY_PARTIAL_ALLOWED) {
+        if (fill_policy == FILL_POLICY_PARTIAL_ALLOWED || fill_policy == FILL_POLICY_PARTIAL_GATED) {
             assert!(min_fill_amount <= offer_amount, errors::min_fill_exceeds_amount());
         };
 
@@ -441,6 +444,90 @@ module davy::offer {
         transfer::public_transfer(payment_coin, maker);
     }
 
+    // ===== fill_partial_gated — cap-gated partial fill =====
+
+    /// Low-level partial fill gated by PartialFillCap.
+    /// Same semantics as fill_partial but requires:
+    ///   - offer.fill_policy == FILL_POLICY_PARTIAL_GATED
+    ///   - caller holds a valid PartialFillCap reference
+    public fun fill_partial_gated<OfferAsset, WantAsset>(
+        offer: &mut LiquidityOffer<OfferAsset, WantAsset>,
+        fill_amount: u64,
+        payment: Coin<WantAsset>,
+        _partial_cap: &davy::capability::PartialFillCap,
+        clock: &Clock,
+        ctx: &mut TxContext,
+    ): (FillReceipt<OfferAsset, WantAsset>, Coin<WantAsset>) {
+        assert_fillable(offer, clock);
+        assert!(offer.fill_policy == FILL_POLICY_PARTIAL_GATED, errors::partial_fill_cap_required());
+
+        let remaining = balance::value(&offer.offer_balance);
+        assert!(fill_amount > 0, errors::zero_amount());
+        assert!(fill_amount <= remaining, errors::fill_exceeds_remaining());
+        assert!(fill_amount >= offer.min_fill_amount, errors::fill_below_minimum());
+
+        // Dust check
+        check_no_dust(offer, fill_amount);
+
+        let payment_amount = coin::value(&payment);
+        let price = calculate_price(payment_amount, fill_amount);
+        validate_price_bounds(price, offer.min_price, offer.max_price);
+
+        // Extract fill_amount from balance
+        let offer_balance = balance::split(&mut offer.offer_balance, fill_amount);
+
+        // Update state
+        offer.total_filled = offer.total_filled + fill_amount;
+        offer.fill_count = offer.fill_count + 1;
+
+        let new_remaining = balance::value(&offer.offer_balance);
+        let is_full = new_remaining == 0;
+        if (is_full) {
+            offer.status = STATUS_FILLED;
+        } else {
+            offer.status = STATUS_PARTIALLY_FILLED;
+        };
+
+        let offer_id = object::id(offer);
+        let taker = tx_context::sender(ctx);
+
+        events::emit_offer_filled(
+            offer_id, taker, fill_amount, payment_amount, price, is_full, new_remaining,
+        );
+
+        let receipt = FillReceipt<OfferAsset, WantAsset> {
+            offer_balance,
+            fill_amount,
+            payment_amount,
+            price,
+            is_full,
+        };
+
+        (receipt, payment)
+    }
+
+    // ===== fill_partial_gated_and_settle — atomic =====
+
+    /// Atomic cap-gated partial fill + settlement.
+    public fun fill_partial_gated_and_settle<OfferAsset, WantAsset>(
+        offer: &mut LiquidityOffer<OfferAsset, WantAsset>,
+        fill_amount: u64,
+        payment: Coin<WantAsset>,
+        partial_cap: &davy::capability::PartialFillCap,
+        clock: &Clock,
+        ctx: &mut TxContext,
+    ) {
+        let maker = offer.maker;
+        let taker = tx_context::sender(ctx);
+
+        let (receipt, payment_coin) = fill_partial_gated(offer, fill_amount, payment, partial_cap, clock, ctx);
+        let (offer_coin, _fill_amount, _payment_amount, _price, _is_full) = unpack_receipt(receipt, ctx);
+
+        // Settlement: OfferAsset → taker, WantAsset → maker
+        transfer::public_transfer(offer_coin, taker);
+        transfer::public_transfer(payment_coin, maker);
+    }
+
     // ===== View Functions =====
 
     public fun remaining_amount<OfferAsset, WantAsset>(
@@ -528,6 +615,7 @@ module davy::offer {
 
     public fun fill_policy_full_only(): u8 { FILL_POLICY_FULL_ONLY }
     public fun fill_policy_partial_allowed(): u8 { FILL_POLICY_PARTIAL_ALLOWED }
+    public fun fill_policy_partial_gated(): u8 { FILL_POLICY_PARTIAL_GATED }
 
     // =========================================================================
     // QUOTE HELPERS — Pure view functions for router integration (Phase 7)
@@ -570,7 +658,7 @@ module davy::offer {
         // Status guard (no clock check — caller responsibility)
         assert!(
             offer.status == STATUS_CREATED || offer.status == STATUS_PARTIALLY_FILLED,
-            errors::offer_not_fillable()
+            errors::invalid_status_for_fill()
         );
 
         // Amount guards
@@ -626,11 +714,11 @@ module davy::offer {
         // Status guard
         assert!(
             offer.status == STATUS_CREATED || offer.status == STATUS_PARTIALLY_FILLED,
-            errors::offer_not_fillable()
+            errors::invalid_status_for_fill()
         );
 
         assert!(pay_budget > 0, errors::zero_amount());
-        assert!(price > 0, errors::zero_min_price()); // using zero_min_price as general zero_price error
+        assert!(price > 0, errors::zero_price()); 
 
         // Price bounds check
         assert!(price >= offer.min_price, errors::price_too_low());

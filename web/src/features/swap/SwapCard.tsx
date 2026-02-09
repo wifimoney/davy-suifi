@@ -6,62 +6,23 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
-import { SuiIcon, UsdcIcon } from '@/components/icons';
-import { DavyRouter, OfferCache, FillPolicy, OfferStatus } from '@davy/router-reference';
-import type { CachedIntent, CachedOffer } from '@davy/router-reference';
-
-// Mock Oracle Data (Router Cache)
-const MOCK_OFFERS: CachedOffer[] = [
-    {
-        offerId: '0xabc123...',
-        maker: '0xmaker1...',
-        offerAssetType: 'SUI',
-        wantAssetType: 'USDC',
-        initialAmount: 10_000_000_000n, // 10 SUI
-        remainingAmount: 5_000_000_000n, // 5 SUI remaining
-        minPrice: 1_500_000_000n, // 1.5 USDC/SUI
-        maxPrice: 2_000_000_000n, // 2.0 USDC/SUI
-        fillPolicy: FillPolicy.PartialAllowed,
-        minFillAmount: 1_000_000_000n, // 1 SUI
-        expiryTimestampMs: Date.now() + 3600_000,
-        status: OfferStatus.PartiallyFilled,
-        totalFilled: 5_000_000_000n,
-        fillCount: 1,
-    },
-    {
-        offerId: '0xdef456...',
-        maker: '0xmaker2...',
-        offerAssetType: 'SUI',
-        wantAssetType: 'USDC',
-        initialAmount: 20_000_000_000n, // 20 SUI
-        remainingAmount: 20_000_000_000n, // 20 SUI full
-        minPrice: 1_450_000_000n, // 1.45 USDC/SUI
-        maxPrice: 1_900_000_000n, // 1.9 USDC/SUI
-        fillPolicy: FillPolicy.FullOnly,
-        minFillAmount: 20_000_000_000n, // Must take all 20
-        expiryTimestampMs: Date.now() + 3600_000,
-        status: OfferStatus.Created,
-        totalFilled: 0n,
-        fillCount: 0,
-    },
-];
+import { TokenSUI, TokenUSDC } from '@web3icons/react';
+import { useDavyRouter } from '@/hooks/use-davy-router';
+import type { CachedIntent } from '@davy/router-reference';
 
 export function SwapCard() {
     const [payAmount, setPayAmount] = useState<string>('');
     const [receiveAmount, setReceiveAmount] = useState<string>('');
-    const [priceImpact, setPriceImpact] = useState<number>(0);
     const [route, setRoute] = useState<any>(null);
     const [isQuoting, setIsQuoting] = useState(false);
     const [settingsOpen, setSettingsOpen] = useState(false);
 
     // Settings
     const [slippage, setSlippage] = useState('0.5');
-    const [deadline, setDeadline] = useState('10'); // minutes
+    const [deadline, setDeadline] = useState('10');
 
-    // Initialize Router
-    const cache = new OfferCache();
-    MOCK_OFFERS.forEach(o => cache.upsert(o));
-    const router = new DavyRouter(cache);
+    // Shared router — singleton cache, no per-render recreation
+    const { routeIntent } = useDavyRouter();
 
     const handleQuote = async (amount: string) => {
         if (!amount || isNaN(parseFloat(amount))) {
@@ -72,62 +33,36 @@ export function SwapCard() {
 
         setIsQuoting(true);
 
-        // Simulate network delay
-        await new Promise(r => setTimeout(r, 500));
-
         try {
+            // Asset direction:
+            //   Offers: Maker provides OfferAsset (SUI), wants WantAsset (USDC)
+            //   User intent: Pay USDC to receive SUI (buying SUI with USDC)
+            //   So: receiveAssetType=SUI, payAssetType=USDC
             const payAmountBig = BigInt(Math.floor(parseFloat(amount) * 1e9));
-
-            // We want to Receive X for Pay Y. But router logic is usually "I want X, pay max Y" or "I pay Y, get min X".
-            // The current router reference implementation `routeIntent` takes an intent which specifies `receiveAmount` (exact output) and `maxPayAmount`.
-            // Let's adapt: The user inputs Pay Amount (SUI). We want to find the best Receive Amount (USDC).
-            // Since the current router logic is `routeIntent` (Exact Output), we might need to iterate or approximate for Exact Input.
-            // FOR DEMO: We will assume a price and reverse calculate, then verify with router.
-
-            // Let's use the best market price from cache to estimate receive amount
-            const bestPrice = 1.5; // From mock offers (1 SUI = 1.5 USDC)
-            const estimatedReceive = parseFloat(amount) * bestPrice;
-            const receiveBig = BigInt(Math.floor(estimatedReceive * 1e9));
-
-            // Now constructs an intent to buy `estimatedReceive` USDC for `payAmountBig` SUI
-            // Wait, the router handles `SUI` -> `USDC` swap? 
-            // Existing mock data: offerAsset=SUI, wantAsset=USDC. 
-            // Maker offers SUI, wants USDC. 
-            // Taker (User) wants SUI, pays USDC.
-            // So the current mock data supports BUYING SUI with USDC.
-
-            // Let's flip it for the UI: User PAY USDC -> RECEIVE SUI.
-            // User inputs USDC amount.
-
-            // Log for debugging (and to use variables)
-            console.log('Quoting for:', { payAmountBig, receiveBig, priceImpact });
 
             const intent: CachedIntent = {
                 intentId: '0xquote...',
                 creator: '0xuser...',
                 receiveAssetType: 'SUI',
                 payAssetType: 'USDC',
-                receiveAmount: BigInt(Math.floor(parseFloat(amount) / 1.5 * 1e9)), // Trying to buy SUI
-                maxPayAmount: BigInt(Math.floor(parseFloat(amount) * 1e9)), // Max pay is input
-                escrowedAmount: BigInt(Math.floor(parseFloat(amount) * 1e9)),
+                receiveAmount: BigInt(Math.floor(parseFloat(amount) / 1.5 * 1e9)),
+                maxPayAmount: payAmountBig,
+                escrowedAmount: payAmountBig,
                 minPrice: 1_000_000_000n,
                 maxPrice: 2_000_000_000n,
                 expiryTimestampMs: Date.now() + 60000,
-                status: 'pending'
+                status: 'pending',
             };
 
-            const decision = await router.routeIntent(intent, Date.now());
+            const decision = await routeIntent(intent);
 
             if (decision.source !== 'skip') {
                 setRoute(decision);
-                // If we input Pay Amount, the router told us if it's possible.
-                // Effectively we are getting `fillAmount` SUI for `paymentAmount` USDC.
                 setReceiveAmount((Number(decision.fillAmount) / 1e9).toFixed(4));
-                setPriceImpact(0.1); // Mock
             } else {
                 setRoute(null);
+                setReceiveAmount('');
             }
-
         } catch (e) {
             console.error(e);
         } finally {
@@ -217,7 +152,7 @@ export function SwapCard() {
                             className="border-none bg-transparent text-2xl font-bold p-0 shadow-none focus-visible:ring-0 h-auto placeholder:text-muted-foreground/50"
                         />
                         <div className="flex items-center gap-2 bg-background px-3 py-1.5 rounded-full border border-border shadow-sm shrink-0">
-                            <UsdcIcon className="w-6 h-6" />
+                            <TokenUSDC size={24} variant="mono" />
                             <span className="font-semibold">USDC</span>
                         </div>
                     </div>
@@ -252,7 +187,7 @@ export function SwapCard() {
                             className="border-none bg-transparent text-2xl font-bold p-0 shadow-none focus-visible:ring-0 h-auto placeholder:text-muted-foreground/50 text-blue-500"
                         />
                         <div className="flex items-center gap-2 bg-background px-3 py-1.5 rounded-full border border-border shadow-sm shrink-0">
-                            <SuiIcon className="w-6 h-6" />
+                            <TokenSUI size={24} variant="mono" />
                             <span className="font-semibold">SUI</span>
                         </div>
                     </div>

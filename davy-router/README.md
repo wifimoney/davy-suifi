@@ -1,38 +1,48 @@
-# Davy Protocol — Off-Chain Router (Reference Implementation)
+# davy-router
 
-This package demonstrates how to build an off-chain router for the Davy Protocol.
+**Reference off-chain router for the Davy Protocol.**
 
-It proves the **Composability** of the Davy primitive: specialized liquidity
-can be discovered, priced, and executed alongside standard pools.
+Proves that the Davy primitive composes into real execution outcomes:
+intent → query offers → compare vs external sources → execute best → emit trace.
+
+## Quick Start
+
+```bash
+npm install
+npx tsx src/demo.ts
+```
 
 ## Architecture
 
-1.  **Indexer (Mock):** `offer-cache.ts`
-    -   In production, this would be a service listening to `OfferCreated` / `OfferFilled` events.
-2.  **Pricing Engine:** `math.ts`
-    -   **CRITICAL:** Replicates on-chain Move math exactly.
-3.  **Router:** `router.ts`
-    -   Compare Davy offers vs External venues (e.g., DeepBook).
-    -   Constraints: Status, Expiry, Fill Policy, Price Bounds, Dust.
-
-## Usage
-
-```bash
-# Install dependencies
-npm install
-
-# Run the demo
-npm run demo
+```
+src/
+├── math.ts         # Deterministic pricing (mirrors offer.move exactly)
+├── types.ts        # CachedOffer, CachedIntent, RoutingDecision, ExecutionTrace
+├── offer-cache.ts  # In-memory offer cache built from events
+├── router.ts       # Routing logic: Davy vs external sources
+├── demo.ts         # End-to-end demo flow
+└── index.ts        # Package exports
 ```
 
-The demo simulates:
-1.  An intent to buy 5 SUI for max 10 USDC (limit price 2.0).
-2.  Two active Davy offers:
-    -   Offer A: 5 SUI @ 1.5 USDC (Partial allowed)
-    -   Offer B: 20 SUI @ 1.45 USDC (Full only)
-3.  The router correctly picks Offer A because Offer B, while cheaper,
-    doesn't fit the `fill_amount` constraint due to its generic FullOnly policy.
+## How It Works
 
-## Rounding Rules
+1. **Indexer** subscribes to Davy events (`OfferCreated`, `OfferFilled`, etc.)
+2. **OfferCache** maintains fillable offers in memory
+3. **Router** receives an intent and:
+   - Queries Davy offers matching the asset pair
+   - Quotes payment for each offer using `quotePayAmount()`
+   - Queries external sources (DeepBook, Cetus) for comparison
+   - Picks the cheapest source
+4. **Executor** submits the TX using `ExecutorCap`
+5. **Trace** is emitted for audit
 
-See `math.ts` for the exact TypeScript implementation of Davy's ceiling/floor logic.
+## Math Invariant
+
+The TypeScript math in `math.ts` produces **bit-identical** results to Move:
+
+```typescript
+// This MUST equal the on-chain settlement amount
+calcPayment(fillAmount, price) === onChainPayment
+```
+
+See `../davy/README.md` → "Deterministic Rounding Rules" for full spec.

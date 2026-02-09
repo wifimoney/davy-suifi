@@ -7,9 +7,11 @@
 ///   - `AdminCap` — Created once at module publish. Gates all cap minting.
 ///   - `ExecutorCap` — Required for intent execution. Mintable, transferable, revocable.
 ///
-/// ## PartialFillCap (Deprecated in V1)
-///   Retained as a future extension point. Partial fills are controlled
-///   by the offer's `fill_policy` field in V1.
+/// ## PartialFillCap (V2 Gated Fill Policy)
+///   Used with FILL_POLICY_PARTIAL_GATED (2) offers. Holders of a
+///   PartialFillCap can perform partial fills on gated offers via
+///   `offer::fill_partial_gated()`. This enables permissioned partial
+///   fills for institutional or market-maker use cases.
 ///
 /// ## Minting Flow
 ///   Deployment → AdminCap → Deployer
@@ -36,8 +38,9 @@ module davy::capability {
         minted_by: address,
     }
 
-    /// @deprecated V1: Partial fill capability — retained for future extension.
-    /// Partial fills are controlled by offer `fill_policy` in V1. Do not use.
+    /// Partial fill capability — required for V2 gated fill policy.
+    /// Holders can call `offer::fill_partial_gated()` on offers with
+    /// fill_policy == FILL_POLICY_PARTIAL_GATED (2).
     public struct PartialFillCap has key, store {
         id: UID,
         /// Human-readable label

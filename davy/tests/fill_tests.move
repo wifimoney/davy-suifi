@@ -5,6 +5,7 @@ module davy::fill_tests {
     use sui::coin::{Self, Coin};
 
     use davy::offer::{Self, LiquidityOffer};
+    use davy::capability::{Self, AdminCap, PartialFillCap};
 
     // ===== Test coin types =====
     public struct SUI has drop {}
@@ -55,6 +56,33 @@ module davy::fill_tests {
             clock,
             ctx,
         );
+    }
+
+    /// Create a gated partial offer: 1 SUI, price 1–2 USDC/SUI, expiry 5000, min_fill 100, policy=2
+    fun create_gated_offer(scenario: &mut Scenario, clock: &Clock) {
+        ts::next_tx(scenario, @0xA);
+        let ctx = ts::ctx(scenario);
+        let offer_coin = mint_coin(SUI {}, 1_000_000_000, ctx);
+        offer::create<SUI, USDC>(
+            offer_coin,
+            1_000_000_000,  // min_price
+            2_000_000_000,  // max_price
+            5000,           // expiry
+            2,              // partial gated
+            100_000_000,    // min_fill: 0.1 SUI
+            clock,
+            ctx,
+        );
+    }
+
+    /// Mint a PartialFillCap for testing
+    fun setup_partial_fill_cap(scenario: &mut Scenario) {
+        ts::next_tx(scenario, @0xA);
+        capability::init_for_testing(ts::ctx(scenario));
+        ts::next_tx(scenario, @0xA);
+        let admin_cap = ts::take_from_sender<AdminCap>(scenario);
+        capability::mint_partial_fill_cap(&admin_cap, b"test_gated", @0xB, ts::ctx(scenario));
+        ts::return_to_sender(scenario, admin_cap);
     }
 
     // =========================================================
@@ -589,5 +617,132 @@ module davy::fill_tests {
         // Small amounts: 100 units at 1.5x → 150 (ceiling)
         let payment3 = offer::calc_payment(100, 1_500_000_000);
         assert!(payment3 == 150, 4);
+    }
+
+    // =========================================================
+    // 17. Gated partial fill — happy path with PartialFillCap
+    // =========================================================
+
+    #[test]
+    fun test_fill_partial_gated_happy_path() {
+        let mut scenario = ts::begin(@0xA);
+        let clock = setup_clock(&mut scenario);
+        setup_partial_fill_cap(&mut scenario);
+        create_gated_offer(&mut scenario, &clock);
+
+        // Taker @0xB fills 0.5 SUI with 0.75 USDC (price = 1.5e9), using cap
+        ts::next_tx(&mut scenario, @0xB);
+        {
+            let mut offer = ts::take_shared<LiquidityOffer<SUI, USDC>>(&scenario);
+            let cap = ts::take_from_sender<PartialFillCap>(&scenario);
+            let ctx = ts::ctx(&mut scenario);
+            let payment = mint_coin(USDC {}, 750_000_000, ctx);
+
+            offer::fill_partial_gated_and_settle(
+                &mut offer, 500_000_000, payment, &cap, &clock, ctx,
+            );
+
+            assert!(offer::status(&offer) == offer::status_partially_filled(), 0);
+            assert!(offer::remaining_amount(&offer) == 500_000_000, 1);
+            assert!(offer::total_filled(&offer) == 500_000_000, 2);
+            assert!(offer::fill_count(&offer) == 1, 3);
+
+            ts::return_to_sender(&scenario, cap);
+            ts::return_shared(offer);
+        };
+
+        clock::destroy_for_testing(clock);
+        ts::end(scenario);
+    }
+
+    // =========================================================
+    // 18. Standard fill_partial on gated offer should abort
+    // =========================================================
+
+    #[test]
+    #[expected_failure(abort_code = 110, location = davy::offer)]
+    fun test_fill_partial_on_gated_offer_aborts() {
+        let mut scenario = ts::begin(@0xA);
+        let clock = setup_clock(&mut scenario);
+        create_gated_offer(&mut scenario, &clock);
+
+        // Taker @0xB tries standard fill_partial on gated offer — should fail
+        ts::next_tx(&mut scenario, @0xB);
+        {
+            let mut offer = ts::take_shared<LiquidityOffer<SUI, USDC>>(&scenario);
+            let ctx = ts::ctx(&mut scenario);
+            let payment = mint_coin(USDC {}, 750_000_000, ctx);
+
+            offer::fill_partial_and_settle(
+                &mut offer, 500_000_000, payment, &clock, ctx,
+            );
+
+            ts::return_shared(offer);
+        };
+
+        clock::destroy_for_testing(clock);
+        ts::end(scenario);
+    }
+
+    // =========================================================
+    // 19. Gated fill without cap aborts (wrong policy check)
+    // =========================================================
+
+    #[test]
+    #[expected_failure(abort_code = 119, location = davy::offer)]
+    fun test_fill_partial_gated_without_cap_aborts() {
+        let mut scenario = ts::begin(@0xA);
+        let clock = setup_clock(&mut scenario);
+        setup_partial_fill_cap(&mut scenario);
+        // Create a regular partial offer (policy=1), NOT gated
+        create_partial_offer(&mut scenario, &clock);
+
+        // Taker @0xB tries gated fill on non-gated offer — should fail with 119
+        ts::next_tx(&mut scenario, @0xB);
+        {
+            let mut offer = ts::take_shared<LiquidityOffer<SUI, USDC>>(&scenario);
+            let cap = ts::take_from_sender<PartialFillCap>(&scenario);
+            let ctx = ts::ctx(&mut scenario);
+            let payment = mint_coin(USDC {}, 750_000_000, ctx);
+
+            offer::fill_partial_gated_and_settle(
+                &mut offer, 500_000_000, payment, &cap, &clock, ctx,
+            );
+
+            ts::return_to_sender(&scenario, cap);
+            ts::return_shared(offer);
+        };
+
+        clock::destroy_for_testing(clock);
+        ts::end(scenario);
+    }
+
+    // =========================================================
+    // 20. Full fills still work on gated offers
+    // =========================================================
+
+    #[test]
+    fun test_fill_full_on_gated_offer_works() {
+        let mut scenario = ts::begin(@0xA);
+        let clock = setup_clock(&mut scenario);
+        create_gated_offer(&mut scenario, &clock);
+
+        // Taker @0xB does a full fill — no cap needed for full fills
+        ts::next_tx(&mut scenario, @0xB);
+        {
+            let mut offer = ts::take_shared<LiquidityOffer<SUI, USDC>>(&scenario);
+            let ctx = ts::ctx(&mut scenario);
+            let payment = mint_coin(USDC {}, 1_500_000_000, ctx);
+
+            offer::fill_full_and_settle(&mut offer, payment, &clock, ctx);
+
+            assert!(offer::status(&offer) == offer::status_filled(), 0);
+            assert!(offer::remaining_amount(&offer) == 0, 1);
+
+            ts::return_shared(offer);
+        };
+
+        clock::destroy_for_testing(clock);
+        ts::end(scenario);
     }
 }
