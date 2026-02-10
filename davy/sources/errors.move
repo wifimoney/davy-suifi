@@ -146,4 +146,18 @@ module davy::errors {
     /// Pool has reached maximum capacity (1000 offers).
     const EPOOL_FULL: u64 = 404;
     public fun pool_full(): u64 { EPOOL_FULL }
+
+    // ===== Encrypted Intent Errors (210-219) =====
+
+    /// Attempted execute_encrypted on an intent with no encrypted params.
+    const EINTENT_NOT_ENCRYPTED: u64 = 210;
+    public fun intent_not_encrypted(): u64 { EINTENT_NOT_ENCRYPTED }
+
+    /// Encrypted params already consumed (intent already decrypted/executed).
+    const EINTENT_ALREADY_DECRYPTED: u64 = 211;
+    public fun intent_already_decrypted(): u64 { EINTENT_ALREADY_DECRYPTED }
+
+    /// Empty encrypted_params blob passed to create_encrypted_intent.
+    const EZERO_ENCRYPTED_PARAMS: u64 = 212;
+    public fun zero_encrypted_params(): u64 { EZERO_ENCRYPTED_PARAMS }
 }

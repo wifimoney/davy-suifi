@@ -1,109 +1,98 @@
 'use client';
 
-import { useMemo, useCallback } from 'react';
+import { useMemo, useEffect } from 'react';
 import { useSuiClient } from '@mysten/dapp-kit';
 import {
     DavyRouter,
     OfferCache,
-    OfferStatus,
-    FillPolicy,
     CetusAdapter,
 } from '@davy/router-reference';
-import type { CachedOffer, CachedIntent, RoutingDecision } from '@davy/router-reference';
+import type { CachedIntent, RoutingDecision } from '@davy/router-reference';
 import { DAVY_CONFIG } from '@/config';
 
-// Singleton cache — survives re-renders
-let _cache: OfferCache | null = null;
+/**
+ * Hook to interface with the Davy Routing Engine.
+ * 
+ * It manages an event-driven OfferCache that stays in sync with the chain
+ * and provides the Router with real-time liquidity data.
+ */
 
-function getCache(): OfferCache {
-    if (!_cache) {
-        _cache = new OfferCache();
-    }
-    return _cache;
-}
+// Singleton cache & router — survives re-renders to maintain event subscription
+let _cache: OfferCache | null = null;
+let _router: DavyRouter | null = null;
 
 export function useDavyRouter() {
     const suiClient = useSuiClient();
-    const cache = useMemo(() => getCache(), []);
 
-    const router = useMemo(() => {
-        let cetus: CetusAdapter | undefined;
-        try {
-            cetus = new CetusAdapter(DAVY_CONFIG.network as 'testnet' | 'mainnet');
-        } catch {
-            // Cetus SDK not available — router works without it
+    // Initialize singleton cache and router
+    const { cache, router } = useMemo(() => {
+        if (!_cache) {
+            _cache = new OfferCache({
+                client: suiClient as any,
+                packageId: DAVY_CONFIG.packageId
+            });
+
+            // Register external venues
+            const venues = [];
+            try {
+                venues.push(new CetusAdapter({
+                    client: suiClient as any,
+                    network: DAVY_CONFIG.network as 'testnet' | 'mainnet',
+                    slippageBps: 50 // 0.5%
+                }));
+            } catch (e) {
+                console.warn('Cetus adapter failed to initialize:', e);
+            }
+
+            _router = new DavyRouter(_cache, venues);
         }
-        return new DavyRouter(cache, cetus ? [cetus] : []);
+        return { cache: _cache, router: _router! };
+    }, [suiClient]);
+
+    // Start event listening on mount
+    useEffect(() => {
+        cache.start().catch(err => {
+            console.error('Failed to start OfferCache:', err);
+        });
+
+        // No need to stop on every unmount if we want to keep it warm,
+        // but for a hook strictly speaking we should or have a ref-count.
+        // For simplicity in this demo, we keep it active.
     }, [cache]);
 
-    const refreshOffers = useCallback(async () => {
-        const packageId = DAVY_CONFIG.packageId;
+    /**
+     * Finds the best route for a given swap intent.
+     * 
+     * @param receiveAssetType - The coin the user wants
+     * @param payAssetType - The coin the user is paying with
+     * @param amount - Raw amount of receive asset
+     */
+    const getRoute = async (
+        receiveAssetType: string,
+        payAssetType: string,
+        amount: bigint
+    ): Promise<RoutingDecision | null> => {
+        return router.route(receiveAssetType, payAssetType, amount);
+    };
 
-        const [createdEvents, filledEvents] = await Promise.all([
-            suiClient.queryEvents({
-                query: { MoveEventType: `${packageId}::events::OfferCreated` },
-                order: 'descending',
-                limit: 100,
-            }),
-            suiClient.queryEvents({
-                query: { MoveEventType: `${packageId}::events::OfferFilled` },
-                order: 'descending',
-                limit: 100,
-            }),
-        ]);
+    /**
+     * Find best route for a specific Intent object.
+     */
+    const routeIntent = async (intent: CachedIntent): Promise<RoutingDecision | null> => {
+        return router.route(
+            intent.receiveAssetType,
+            intent.payAssetType,
+            intent.receiveAmount
+        );
+    };
 
-        // Build offer map from OfferCreated events
-        const offerMap = new Map<string, CachedOffer>();
-
-        for (const ev of createdEvents.data) {
-            const fields = ev.parsedJson as any;
-            const offer: CachedOffer = {
-                offerId: fields.offer_id,
-                maker: fields.maker,
-                offerAssetType: fields.offer_asset?.name ?? 'SUI',
-                wantAssetType: fields.want_asset?.name ?? 'USDC',
-                initialAmount: BigInt(fields.initial_offer_amount),
-                remainingAmount: BigInt(fields.initial_offer_amount),
-                minPrice: BigInt(fields.min_price),
-                maxPrice: BigInt(fields.max_price),
-                fillPolicy: Number(fields.fill_policy) as FillPolicy,
-                minFillAmount: BigInt(fields.min_fill_amount),
-                expiryTimestampMs: Number(fields.expiry_timestamp_ms),
-                status: OfferStatus.Created,
-                totalFilled: 0n,
-                fillCount: 0,
-            };
-            offerMap.set(offer.offerId, offer);
-        }
-
-        // Apply fills
-        for (const ev of filledEvents.data) {
-            const fields = ev.parsedJson as any;
-            const offer = offerMap.get(fields.offer_id);
-            if (!offer) continue;
-
-            offer.totalFilled += BigInt(fields.fill_amount);
-            offer.fillCount += 1;
-            offer.remainingAmount = BigInt(fields.remaining);
-            if (fields.is_full) {
-                offer.status = OfferStatus.Filled;
-            } else {
-                offer.status = OfferStatus.PartiallyFilled;
-            }
-        }
-
-        // Rebuild cache
-        for (const offer of offerMap.values()) {
-            cache.upsert(offer);
-        }
-    }, [suiClient, cache]);
-
-    const routeIntent = useCallback(
-        async (intent: CachedIntent): Promise<RoutingDecision> => {
-            return router.routeIntent(intent, Date.now());
-        },
-        [router],
-    );
-
-    return { router, cache, refreshOffers, routeIntent };
+    return {
+        router,
+        cache,
+        getRoute,
+        routeIntent,
+        // Helper to get raw offers for UI display
+        getOffers: (offerAsset: string, wantAsset: string) =>
+            cache.getActiveOffersSorted(offerAsset, wantAsset)
+    };
 }

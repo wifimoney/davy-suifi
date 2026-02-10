@@ -1,5 +1,5 @@
 {
-    "name": "@davy-protocol/router",
+    "name": "@davy/router-reference",
     "version": "0.8.0",
     "description": "Production router for the Davy Protocol — split-route execution across Davy offers, DeepBook, and Cetus",
     "type": "module",
@@ -18,11 +18,13 @@
         "lint": "tsc --noEmit"
     },
     "dependencies": {
-        "@mysten/sui": "^1.16.0"
+        "@mysten/sui": "^1.45.2",
+        "@mysten/seal": "^1.0.0",
+        "@mysten/walrus": "^1.0.1"
     },
     "optionalDependencies": {
         "@mysten/deepbook-v3": "^0.17.0",
-        "@cetusprotocol/sui-clmm-sdk": "^5.0.0"
+        "@cetusprotocol/sui-clmm-sdk": "^1.4.0"
     },
     "devDependencies": {
         "typescript": "^5.5.0",

@@ -41,24 +41,24 @@ export function SwapCard() {
             const payAmountBig = BigInt(Math.floor(parseFloat(amount) * 1e9));
 
             const intent: CachedIntent = {
-                intentId: '0xquote...',
+                objectId: '0xquote...',
                 creator: '0xuser...',
                 receiveAssetType: 'SUI',
                 payAssetType: 'USDC',
                 receiveAmount: BigInt(Math.floor(parseFloat(amount) / 1.5 * 1e9)),
                 maxPayAmount: payAmountBig,
-                escrowedAmount: payAmountBig,
                 minPrice: 1_000_000_000n,
                 maxPrice: 2_000_000_000n,
-                expiryTimestampMs: Date.now() + 60000,
-                status: 'pending',
+                expiryMs: BigInt(Date.now() + 60000),
+                status: 'Pending',
+                lastUpdatedAt: Date.now()
             };
 
             const decision = await routeIntent(intent);
 
-            if (decision.source !== 'skip') {
+            if (decision && decision.legs.length > 0) {
                 setRoute(decision);
-                setReceiveAmount((Number(decision.fillAmount) / 1e9).toFixed(4));
+                setReceiveAmount((Number(decision.totalReceiveAmount) / 1e9).toFixed(4));
             } else {
                 setRoute(null);
                 setReceiveAmount('');
@@ -192,7 +192,7 @@ export function SwapCard() {
                         </div>
                     </div>
                     <div className="text-xs text-muted-foreground text-right">
-                        {route && route.effectivePrice ? `1 SUI ≈ ${(Number(route?.effectivePrice) / 1e9).toFixed(4)} USDC` : '-'}
+                        {route && route.blendedPrice ? `1 SUI ≈ ${(Number(route?.blendedPrice) / 1e9).toFixed(4)} USDC` : '-'}
                     </div>
                 </div>
 
@@ -205,7 +205,7 @@ export function SwapCard() {
                             </span>
                             <span className="font-medium flex items-center gap-1">
                                 <span className="w-2 h-2 rounded-full bg-green-500" />
-                                {route.source.toUpperCase()}
+                                {route.isSplit ? 'SPLIT' : route.legs[0]?.venue.toUpperCase()}
                             </span>
                         </div>
                         <div className="flex justify-between items-center">

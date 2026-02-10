@@ -11,8 +11,8 @@ beforeEach(() => {
     vi.mocked(useDavyRouter).mockReturnValue({
         router: {} as any,
         cache: {} as any,
-        refreshOffers: vi.fn(),
         routeIntent: mockRouteIntent,
+        getOffers: vi.fn(() => []),
     });
 });
 
@@ -29,12 +29,17 @@ describe('SwapCard', () => {
 
     it('shows route info when a quote is returned', async () => {
         mockRouteIntent.mockResolvedValue({
-            source: 'davy',
-            offerId: '0xabc',
-            fillAmount: 3_000_000_000n,
-            paymentAmount: 4_500_000_000n,
-            effectivePrice: 1_500_000_000n,
-            reason: 'Best on-chain offer found.',
+            isSplit: false,
+            legs: [{
+                venue: 'davy',
+                quote: { offerId: '0xabc' },
+                receiveAmount: 3_000_000_000n,
+                payAmount: 4_500_000_000n,
+                effectivePrice: 1_500_000_000n,
+            }],
+            totalReceiveAmount: 3_000_000_000n,
+            totalPayAmount: 4_500_000_000n,
+            blendedPrice: 1_500_000_000n,
         });
 
         renderWithProviders(<SwapCard />);

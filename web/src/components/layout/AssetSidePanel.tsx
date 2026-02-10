@@ -72,13 +72,20 @@ export function AssetSidePanel() {
             </div>
 
             <div className="px-6">
-                <div className="bg-[#151515] rounded-xl grid grid-cols-4 p-1 border border-white/5">
+                <div className="bg-zinc-950/50 rounded-xl grid grid-cols-4 p-1 border border-white/5">
                     {timeStats.map((s) => (
                         <div key={s.label} className={cn(
-                            "flex flex-col items-center py-2 rounded-lg transition-colors cursor-pointer hover:bg-white/5",
-                            s.label === '24H' ? "bg-white/5" : ""
+                            "flex flex-col items-center py-2 rounded-lg transition-all cursor-pointer",
+                            s.label === '24H'
+                                ? "bg-cyan-500/10 border border-cyan-500/20 text-cyan-400"
+                                : "text-gray-500 hover:bg-white/5"
                         )}>
-                            <span className="text-[9px] font-black text-gray-600 mb-1 font-secondary">{s.label}</span>
+                            <span className={cn(
+                                "text-[9px] font-black mb-1 font-secondary uppercase tracking-widest",
+                                s.label === '24H' ? "text-cyan-400" : "text-gray-600"
+                            )}>
+                                {s.label}
+                            </span>
                             <span className={cn(
                                 "text-[10px] font-bold font-pixel",
                                 s.isUp ? "text-green-500" : "text-red-500"

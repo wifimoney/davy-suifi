@@ -34,7 +34,7 @@ export function TradeBox() {
 
     const account = useCurrentAccount();
     const suiClient = useSuiClient();
-    const { routeIntent, refreshOffers } = useDavyRouter();
+    const { routeIntent } = useDavyRouter();
     const { isConnected, createIntent, fillOffer } = useDavyTransactions();
 
     // Balance queries
@@ -80,23 +80,23 @@ export function TradeBox() {
             try {
                 const payBig = BigInt(Math.floor(parseFloat(payAmount) * 1e9));
                 const intent: CachedIntent = {
-                    intentId: '0xquote',
+                    objectId: '0xquote',
                     creator: account?.address ?? '0x0',
                     receiveAssetType: side === 'buy' ? 'SUI' : 'USDC',
                     payAssetType: side === 'buy' ? 'USDC' : 'SUI',
                     receiveAmount: BigInt(Math.floor(parseFloat(payAmount) / 1.5 * 1e9)),
                     maxPayAmount: payBig,
-                    escrowedAmount: payBig,
                     minPrice: 1_000_000_000n,
                     maxPrice: 3_000_000_000n,
-                    expiryTimestampMs: Date.now() + 600_000,
-                    status: 'pending',
+                    expiryMs: BigInt(Date.now() + 600_000),
+                    status: 'Pending',
+                    lastUpdatedAt: Date.now()
                 };
 
                 const decision = await routeIntent(intent);
-                if (decision.source !== 'skip') {
+                if (decision && decision.legs.length > 0) {
                     setRoute(decision);
-                    setReceiveAmount((Number(decision.fillAmount) / 1e9).toFixed(4));
+                    setReceiveAmount((Number(decision.totalReceiveAmount) / 1e9).toFixed(4));
                 } else {
                     setRoute(null);
                     setReceiveAmount('');
@@ -117,26 +117,26 @@ export function TradeBox() {
 
         setIsSubmitting(true);
         try {
-            if (type === 'swap' && route.offerId) {
+            if (type === 'swap' && route.legs[0]?.venue === 'davy') {
+                const quote = route.legs[0].quote as any;
                 await fillOffer({
-                    offerId: route.offerId,
+                    offerId: quote.offerId,
                     offerAssetType: DAVY_CONFIG.coinTypes.SUI,
                     wantAssetType: DAVY_CONFIG.coinTypes.USDC,
                     paymentCoinId: '', // Would need coin selection in production
-                    fillAmount: route.fillAmount > 0n ? route.fillAmount : undefined,
+                    fillAmount: route.totalReceiveAmount > 0n ? route.totalReceiveAmount : undefined,
                 });
             } else if (type === 'limit') {
                 await createIntent({
                     receiveAssetType: DAVY_CONFIG.coinTypes.SUI,
                     payAssetType: DAVY_CONFIG.coinTypes.USDC,
-                    receiveAmount: route.fillAmount,
+                    receiveAmount: route.totalReceiveAmount,
                     paymentCoinId: '', // Would need coin selection in production
                     minPrice: 1_000_000_000n,
-                    maxPrice: route.effectivePrice,
+                    maxPrice: route.blendedPrice,
                     expiryMs: Date.now() + 3600_000,
                 });
             }
-            await refreshOffers();
         } catch (e) {
             console.error('Transaction failed:', e);
         } finally {
@@ -146,11 +146,11 @@ export function TradeBox() {
 
     const slippage = 0.005; // 0.5%
     const minReceived = route
-        ? (Number(route.fillAmount) / 1e9 * (1 - slippage)).toFixed(4)
+        ? (Number(route.totalReceiveAmount) / 1e9 * (1 - slippage)).toFixed(4)
         : '-';
     const priceImpact = route ? '< 0.01%' : '-';
     const tradingFee = route ? '~0.01 SUI' : '-';
-    const routeSource = route ? route.source.toUpperCase() : '-';
+    const routeSource = route ? (route.isSplit ? 'SPLIT' : route.legs[0]?.venue.toUpperCase()) : '-';
 
     return (
         <div className="w-[360px] bg-[#0b0b0b] border-l border-white/5 flex flex-col h-full select-none">
@@ -158,10 +158,10 @@ export function TradeBox() {
                 <button
                     onClick={() => setSide('buy')}
                     className={cn(
-                        "flex-1 py-1.5 rounded-lg text-xs font-bold transition-all border",
+                        "flex-1 py-2 rounded-xl text-[10px] uppercase tracking-widest font-black transition-all border font-secondary",
                         side === 'buy'
-                            ? "bg-green-500/10 border-green-500/50 text-green-500"
-                            : "border-transparent text-gray-500 hover:text-gray-300"
+                            ? "bg-green-500/15 border-green-500/40 text-green-400 shadow-[0_0_20px_rgba(34,197,94,0.1)]"
+                            : "bg-white/5 border-white/5 text-gray-500 hover:text-gray-300"
                     )}
                 >
                     Buy
@@ -169,10 +169,10 @@ export function TradeBox() {
                 <button
                     onClick={() => setSide('sell')}
                     className={cn(
-                        "flex-1 py-1.5 rounded-lg text-xs font-bold transition-all border",
+                        "flex-1 py-2 rounded-xl text-[10px] uppercase tracking-widest font-black transition-all border font-secondary",
                         side === 'sell'
-                            ? "bg-red-500/10 border-red-500/50 text-red-500"
-                            : "border-transparent text-gray-500 hover:text-gray-300"
+                            ? "bg-red-500/15 border-red-500/40 text-red-400 shadow-[0_0_20px_rgba(239,68,68,0.1)]"
+                            : "bg-white/5 border-white/5 text-gray-500 hover:text-gray-300"
                     )}
                 >
                     Sell
@@ -180,31 +180,29 @@ export function TradeBox() {
             </div>
 
             <div className="px-4 pb-2 border-b border-white/5 flex items-center justify-between">
-                <div className="flex gap-4">
-                    {['Swap', 'Limit', 'DCA'].map((t) => (
-                        <button
-                            key={t}
-                            onClick={() => setType(t.toLowerCase())}
-                            className={cn(
-                                "text-xs font-bold pb-2 transition-all relative",
-                                type === t.toLowerCase() ? "text-cyan-400" : "text-gray-500 hover:text-gray-300"
-                            )}
-                        >
-                            {t}
-                            {type === t.toLowerCase() && (
-                                <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-cyan-400 rounded-full" />
-                            )}
-                        </button>
-                    ))}
-                </div>
-                <div className="flex gap-2">
-                    <Button variant="ghost" size="icon" className="h-7 w-7 text-gray-500 hover:text-gray-200">
-                        <Merge className="w-3.5 h-3.5" />
-                    </Button>
-                    <Button variant="ghost" size="icon" className="h-7 w-7 text-gray-500 hover:text-gray-200">
-                        <Zap className="w-3.5 h-3.5" />
-                    </Button>
-                </div>
+                <Tabs value={type} onValueChange={setType} className="w-full">
+                    <div className="flex items-center justify-between w-full">
+                        <TabsList className="bg-transparent border-none p-0 h-auto gap-4">
+                            {['Swap', 'Limit', 'DCA'].map((t) => (
+                                <TabsTrigger
+                                    key={t}
+                                    value={t.toLowerCase()}
+                                    className="bg-transparent p-0 pb-2 rounded-none border-b-2 border-transparent data-[state=active]:bg-transparent data-[state=active]:text-cyan-400 data-[state=active]:border-cyan-400 text-xs font-bold text-gray-500 hover:text-gray-300 transition-all h-auto"
+                                >
+                                    {t}
+                                </TabsTrigger>
+                            ))}
+                        </TabsList>
+                        <div className="flex gap-2 pb-2">
+                            <Button variant="ghost" size="icon" className="h-7 w-7 text-gray-500 hover:text-gray-200">
+                                <Merge className="w-3.5 h-3.5" />
+                            </Button>
+                            <Button variant="ghost" size="icon" className="h-7 w-7 text-gray-500 hover:text-gray-200">
+                                <Zap className="w-3.5 h-3.5" />
+                            </Button>
+                        </div>
+                    </div>
+                </Tabs>
             </div>
 
             {type === 'dca' ? (
@@ -237,7 +235,6 @@ export function TradeBox() {
                                         "w-3.5 h-3.5 text-gray-500 cursor-pointer hover:text-gray-200",
                                         isQuoting && "animate-spin"
                                     )}
-                                    onClick={() => refreshOffers()}
                                 />
                             </div>
                         </div>

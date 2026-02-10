@@ -21,6 +21,8 @@
     "concurrently": "^9.1.0"
   },
   "dependencies": {
-    "@cetusprotocol/sui-clmm-sdk": "^1.4.0"
+    "@cetusprotocol/sui-clmm-sdk": "^1.4.0",
+    "@mysten/seal": "^1.0.0",
+    "@mysten/walrus": "^1.0.1"
   }
 }

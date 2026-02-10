@@ -110,6 +110,22 @@ module davy::events {
         refund_amount: u64,
     }
 
+    // ===== Encrypted Intent Events =====
+
+    /// Emitted when an encrypted intent is created.
+    public struct EncryptedIntentSubmitted has copy, drop {
+        intent_id: ID,
+        creator: address,
+        receive_asset: TypeName,
+        pay_asset: TypeName,
+        /// Max payment escrowed (public — needed for escrow, not sensitive).
+        max_pay_amount: u64,
+        escrowed_amount: u64,
+        expiry_timestamp_ms: u64,
+        /// Length of the encrypted blob (for indexer diagnostics).
+        encrypted_params_len: u64,
+    }
+
     // ===== Capability Events =====
 
     public struct AdminCapCreated has copy, drop {
@@ -366,6 +382,23 @@ module davy::events {
     ) {
         event::emit(OfferRemovedFromPool {
             pool_id, offer_id, removed_by,
+        });
+    }
+
+    public fun emit_encrypted_intent_submitted(
+        intent_id: ID,
+        creator: address,
+        receive_asset: TypeName,
+        pay_asset: TypeName,
+        max_pay_amount: u64,
+        escrowed_amount: u64,
+        expiry_timestamp_ms: u64,
+        encrypted_params_len: u64,
+    ) {
+        event::emit(EncryptedIntentSubmitted {
+            intent_id, creator, receive_asset, pay_asset,
+            max_pay_amount, escrowed_amount, expiry_timestamp_ms,
+            encrypted_params_len,
         });
     }
 }

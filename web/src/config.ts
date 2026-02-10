@@ -28,6 +28,11 @@ export const DAVY_CONFIG = {
         USDC: '0xa1ec7fc00a6f40db9693ad1415d0c193ad3906494428cf252621037bd7117e29::usdc::USDC',
     },
 
+    // Privacy (Seal/Walrus) - PHASE 10
+    sealPolicyPackageId: '0x...',
+    executorCapId: '0x...',
+    walrusPublisherId: '0x...',
+
     // Clock object (shared, well-known)
     clockId: '0x6',
 } as const;

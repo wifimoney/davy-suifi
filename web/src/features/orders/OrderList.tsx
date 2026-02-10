@@ -139,13 +139,13 @@ export function OrderList() {
             </CardHeader>
             <CardContent className="p-0 flex-1">
                 <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-                    <div className="px-6 border-b border-border/50">
-                        <TabsList className="bg-transparent h-10 p-0 space-x-6">
+                    <div className="px-4 py-3 border-b border-white/5">
+                        <TabsList className="w-full justify-start gap-2">
                             {['all', 'open', 'history'].map((tab) => (
                                 <TabsTrigger
                                     key={tab}
                                     value={tab}
-                                    className="bg-transparent border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:shadow-none rounded-none px-0 py-2 text-muted-foreground hover:text-foreground transition-colors capitalize"
+                                    className="capitalize"
                                 >
                                     {tab}
                                 </TabsTrigger>

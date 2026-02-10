@@ -42,9 +42,9 @@ export function PriceChart() {
                 </div>
 
                 <Tabs defaultValue="1H" value={activeTimeframe} onValueChange={setActiveTimeframe}>
-                    <TabsList className="bg-secondary/50">
-                        {['1H', '4H', '1D', '1W'].map((tf) => (
-                            <TabsTrigger key={tf} value={tf} className="text-xs px-2 h-7">
+                    <TabsList>
+                        {['1H', '4H', '1D', '1W', '1M', '1Y'].map((tf) => (
+                            <TabsTrigger key={tf} value={tf}>
                                 {tf}
                             </TabsTrigger>
                         ))}
@@ -57,8 +57,8 @@ export function PriceChart() {
                     <AreaChart data={data}>
                         <defs>
                             <linearGradient id="colorPrice" x1="0" y1="0" x2="0" y2="1">
-                                <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.3} />
-                                <stop offset="95%" stopColor="#3b82f6" stopOpacity={0} />
+                                <stop offset="5%" stopColor="#22d3ee" stopOpacity={0.3} />
+                                <stop offset="95%" stopColor="#22d3ee" stopOpacity={0} />
                             </linearGradient>
                         </defs>
                         <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--border)" opacity={0.3} />

@@ -24,18 +24,19 @@ vi.mock('@mysten/dapp-kit', () => ({
 // Mock router hook
 vi.mock('@/hooks/use-davy-router', () => ({
     useDavyRouter: vi.fn(() => ({
-        router: {},
-        cache: {},
-        refreshOffers: vi.fn(),
+        router: {} as any,
+        cache: {} as any,
         routeIntent: vi.fn(() =>
             Promise.resolve({
-                source: 'skip',
-                fillAmount: 0n,
-                paymentAmount: 0n,
-                effectivePrice: 0n,
-                reason: 'No liquidity',
+                isSplit: false,
+                legs: [],
+                totalReceiveAmount: 0n,
+                totalPayAmount: 0n,
+                blendedPrice: 0n,
             }),
         ),
+        getRoute: vi.fn(() => Promise.resolve(null)),
+        getOffers: vi.fn(() => []),
     })),
 }));
 

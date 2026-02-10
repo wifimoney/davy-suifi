@@ -1,0 +1,17 @@
+[package]
+name = "davy_seal_policy"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+Sui = { git = "https://github.com/MystenLabs/sui.git", subdir = "crates/sui-framework/packages/sui-framework", rev = "framework/testnet" }
+
+# Local path to the Davy package for dev/test.
+# Adjust the relative path to match your directory layout:
+#   project-root/
+#     davy/              ← existing Davy package
+#     davy-seal-policy/  ← this package (you are here)
+davy = { local = "../davy" }
+
+[addresses]
+davy_seal_policy = "0x0"

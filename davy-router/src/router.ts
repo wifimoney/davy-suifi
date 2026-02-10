@@ -1,178 +1,448 @@
 /**
- * Davy Protocol — Router
+ * Davy Protocol — Phase 8: Production Router
  *
- * Core routing logic: given an intent, compare Davy offers against
- * external price sources (DeepBook, Cetus) and pick the best execution path.
+ * Compares Davy on-chain offers against external venue quotes
+ * (DeepBook, Cetus, etc.) and produces optimal RoutingDecisions.
  *
- * This is a REFERENCE implementation. Production routers would:
- * - Use real Sui RPC for DeepBook/Cetus price queries
- * - Handle multi-hop routing
- * - Support splitting across sources
- * - Implement gas optimization
+ * Key capabilities:
+ * - Single-venue routing (all-Davy or all-external)
+ * - Split-route routing (partial Davy + partial external in one PTB)
+ * - Multi-offer Davy fills (walk sorted offers like an orderbook)
+ * - Configurable venue priority and thresholds
  */
 
 import { OfferCache } from './offer-cache.js';
-import { CachedIntent, CachedOffer, RoutingDecision, FillPolicy } from './types.js';
-import { quotePayAmount, quoteFillAmount, wouldLeaveDust } from './math.js';
+import {
+    ExternalPriceSource,
+    CachedOffer,
+    RoutingDecision,
+    RoutingLeg,
+    DavyQuote,
+    VenueQuote,
+    PRICE_SCALING,
+    FILL_POLICIES,
+} from './types.js';
+import {
+    calcPayment,
+    quotePayAmount,
+    quoteFillAmount,
+    priceRangesOverlap,
+    wouldLeaveDust,
+    scoreOffer,
+} from './math.js';
 
-/** External price source interface (mock for reference) */
-export interface ExternalPriceSource {
-    name: string;
-    /** Get best available price for asset pair. Returns null if no liquidity. */
-    getPrice(offerAssetType: string, wantAssetType: string, amount: bigint): Promise<bigint | null>;
+// ============================================================
+// Configuration
+// ============================================================
+
+export interface RouterConfig {
+    /** Minimum improvement (bps) Davy must offer over external to prefer it */
+    davyPreferenceBps?: number;
+
+    /** Enable split-route across venues */
+    enableSplitRouting?: boolean;
+
+    /** Maximum number of Davy offers to use in a single route */
+    maxDavyOffersPerRoute?: number;
+
+    /** Minimum fill amount (raw) below which we skip a venue */
+    minLegAmount?: bigint;
 }
 
+const DEFAULT_CONFIG: Required<RouterConfig> = {
+    davyPreferenceBps: 0,
+    enableSplitRouting: true,
+    maxDavyOffersPerRoute: 5,
+    minLegAmount: 1n,
+};
+
+// ============================================================
+// Router
+// ============================================================
+
 export class DavyRouter {
+    private cache: OfferCache;
+    private venues: ExternalPriceSource[] = [];
+    private config: Required<RouterConfig>;
+
     constructor(
-        private offerCache: OfferCache,
-        private externalSources: ExternalPriceSource[] = [],
-    ) { }
-
-    /**
-     * Route an intent: find the best execution path.
-     *
-     * Flow:
-     * 1. Query Davy offers matching the intent's asset pair
-     * 2. For each offer, compute the cost to fill the intent's receive_amount
-     * 3. Query external sources for comparison
-     * 4. Pick the cheapest source
-     * 5. Return routing decision
-     */
-    async routeIntent(intent: CachedIntent, nowMs: number): Promise<RoutingDecision> {
-        const davyBest = this.findBestDavyOffer(intent, nowMs);
-        const externalBest = await this.findBestExternalPrice(intent);
-
-        // No Davy offers available
-        if (!davyBest) {
-            if (!externalBest) {
-                return {
-                    source: 'skip',
-                    fillAmount: 0n,
-                    paymentAmount: 0n,
-                    effectivePrice: 0n,
-                    reason: 'No liquidity available from any source',
-                };
-            }
-            return externalBest;
-        }
-
-        // No external sources available — use Davy
-        if (!externalBest) {
-            return davyBest;
-        }
-
-        // Compare: lowest payment wins
-        if (davyBest.paymentAmount <= externalBest.paymentAmount) {
-            return {
-                ...davyBest,
-                reason: `Davy wins: ${davyBest.paymentAmount} vs ${externalBest.source} ${externalBest.paymentAmount}`,
-            };
-        } else {
-            return {
-                ...externalBest,
-                reason: `${externalBest.source} wins: ${externalBest.paymentAmount} vs Davy ${davyBest.paymentAmount}`,
-            };
-        }
+        cache: OfferCache,
+        venues: ExternalPriceSource[],
+        config?: RouterConfig,
+    ) {
+        this.cache = cache;
+        this.venues = venues;
+        this.config = { ...DEFAULT_CONFIG, ...config };
     }
 
+    // --------------------------------------------------------
+    // Main Routing Entry Point
+    // --------------------------------------------------------
+
     /**
-     * Find the best Davy offer to fill an intent.
-     * Tries each fillable offer and picks the one with lowest payment.
+     * Find the optimal execution path for a trade.
+     *
+     * @param receiveAssetType - Asset the user wants (= OfferAsset on Davy offers)
+     * @param payAssetType - Asset the user pays (= WantAsset on Davy offers)
+     * @param receiveAmount - How much of receiveAsset the user wants
+     * @returns RoutingDecision with one or more legs, or null if no liquidity
      */
-    private findBestDavyOffer(
-        intent: CachedIntent,
-        nowMs: number,
-    ): RoutingDecision | null {
-        const offers = this.offerCache.findFillableOffers(
-            intent.receiveAssetType,
-            intent.payAssetType,
-            nowMs,
+    async route(
+        receiveAssetType: string,
+        payAssetType: string,
+        receiveAmount: bigint,
+    ): Promise<RoutingDecision | null> {
+        // 1. Get Davy offer quotes
+        const davyLegs = this.buildDavyLegs(
+            receiveAssetType,
+            payAssetType,
+            receiveAmount,
         );
 
-        let bestDecision: RoutingDecision | null = null;
+        // 2. Get external venue quotes (parallel)
+        const externalQuotes = await this.getExternalQuotes(
+            receiveAssetType,
+            payAssetType,
+            receiveAmount,
+        );
 
-        for (const offer of offers) {
-            const decision = this.evaluateOffer(offer, intent);
-            if (!decision) continue;
+        // 3. Build candidate routes and pick the best
+        const candidates: RoutingDecision[] = [];
 
-            if (!bestDecision || decision.paymentAmount < bestDecision.paymentAmount) {
-                bestDecision = decision;
-            }
+        // Candidate A: All-Davy (if sufficient liquidity)
+        const allDavy = this.buildAllDavyRoute(
+            receiveAssetType,
+            payAssetType,
+            receiveAmount,
+            davyLegs,
+        );
+        if (allDavy) candidates.push(allDavy);
+
+        // Candidate B: Best single external venue
+        for (const quote of externalQuotes) {
+            const route = this.buildExternalRoute(
+                receiveAssetType,
+                payAssetType,
+                receiveAmount,
+                quote,
+            );
+            if (route) candidates.push(route);
         }
 
-        return bestDecision;
+        // Candidate C: Split routes (Davy + external)
+        if (this.config.enableSplitRouting && davyLegs.length > 0 && externalQuotes.length > 0) {
+            const splitRoutes = this.buildSplitRoutes(
+                receiveAssetType,
+                payAssetType,
+                receiveAmount,
+                davyLegs,
+                externalQuotes,
+            );
+            candidates.push(...splitRoutes);
+        }
+
+        if (candidates.length === 0) return null;
+
+        // 4. Pick best route by total payment (lowest wins)
+        candidates.sort((a, b) => {
+            if (a.totalPayAmount < b.totalPayAmount) return -1;
+            if (a.totalPayAmount > b.totalPayAmount) return 1;
+            // Tie-break: prefer fewer legs (simpler PTB)
+            return a.legs.length - b.legs.length;
+        });
+
+        return candidates[0];
+    }
+
+    // --------------------------------------------------------
+    // Davy Offer Leg Construction
+    // --------------------------------------------------------
+
+    /**
+     * Build potential Davy legs by walking sorted offers.
+     * Returns legs in price-priority order, up to maxDavyOffersPerRoute.
+     */
+    private buildDavyLegs(
+        offerAssetType: string,
+        wantAssetType: string,
+        totalAmount: bigint,
+    ): DavyLeg[] {
+        const offers = this.cache.getActiveOffersSorted(offerAssetType, wantAssetType);
+        const legs: DavyLeg[] = [];
+        let remaining = totalAmount;
+
+        for (const offer of offers) {
+            if (remaining <= 0n) break;
+            if (legs.length >= this.config.maxDavyOffersPerRoute) break;
+
+            const fillAmount = this.computeFillForOffer(offer, remaining);
+            if (fillAmount <= 0n) continue;
+            if (fillAmount < this.config.minLegAmount) continue;
+
+            const payment = calcPayment(fillAmount, offer.maxPrice);
+            const effectivePrice = (payment * PRICE_SCALING) / fillAmount;
+
+            legs.push({
+                offer,
+                fillAmount,
+                payAmount: payment,
+                effectivePrice,
+            });
+
+            remaining -= fillAmount;
+        }
+
+        return legs;
     }
 
     /**
-     * Evaluate a single Davy offer against an intent.
-     * Returns null if the offer can't satisfy the intent.
+     * Compute how much of an offer can be filled given the remaining need.
+     * Respects fill policy, dust prevention, and available balance.
      */
-    private evaluateOffer(offer: CachedOffer, intent: CachedIntent): RoutingDecision | null {
-        const fillAmount = intent.receiveAmount;
+    private computeFillForOffer(offer: CachedOffer, needed: bigint): bigint {
+        const available = offer.remainingBalance;
+        if (available <= 0n) return 0n;
 
-        // Can this offer fill the full intent amount?
-        if (fillAmount > offer.remainingAmount) return null;
-
-        // Is this a partial fill on a full-only offer?
-        if (fillAmount < offer.remainingAmount && offer.fillPolicy === FillPolicy.FullOnly) return null;
-
-        // Would this leave dust?
-        if (fillAmount < offer.remainingAmount) {
-            if (fillAmount < offer.minFillAmount) return null;
-            if (wouldLeaveDust(offer.remainingAmount, fillAmount, offer.minFillAmount)) return null;
+        if (needed >= available) {
+            // Full fill — always allowed
+            return available;
         }
 
-        // Try pricing at offer's min_price (best for taker)
-        const price = offer.minPrice;
+        // Partial fill — check policy
+        if (offer.fillPolicy === FILL_POLICIES.FULL_ONLY) {
+            // Can only take the full offer
+            return 0n;
+        }
 
-        // Check intent price bounds
-        if (price < intent.minPrice || price > intent.maxPrice) return null;
+        // Partial fill allowed — check dust
+        if (wouldLeaveDust(available, needed, offer.minFillAmount)) {
+            // Would leave dust. Options:
+            // 1. Fill the full offer instead (slightly overfills our need)
+            // 2. Skip this offer
+            // We choose to fill full to avoid leaving unfillable dust
+            return available;
+        }
 
-        // Quote payment
-        const paymentAmount = quotePayAmount(fillAmount, price);
+        // Check minimum fill amount
+        if (needed < offer.minFillAmount) {
+            return 0n;
+        }
 
-        // Check against intent's max_pay
-        if (paymentAmount > intent.maxPayAmount) return null;
+        return needed;
+    }
+
+    // --------------------------------------------------------
+    // External Venue Quoting
+    // --------------------------------------------------------
+
+    private async getExternalQuotes(
+        receiveAssetType: string,
+        payAssetType: string,
+        receiveAmount: bigint,
+    ): Promise<VenueQuote[]> {
+        const quotes: VenueQuote[] = [];
+
+        const results = await Promise.allSettled(
+            this.venues.map(async (venue) => {
+                if (venue.getDetailedQuote) {
+                    return venue.getDetailedQuote(receiveAssetType, payAssetType, receiveAmount);
+                }
+                // Fallback to simple price
+                const price = await venue.getPrice(receiveAssetType, payAssetType, receiveAmount);
+                if (price === null) return null;
+
+                const payAmount = calcPayment(receiveAmount, price);
+                return {
+                    venue: venue.name,
+                    receiveAmount,
+                    payAmount,
+                    effectivePrice: price,
+                } as VenueQuote;
+            }),
+        );
+
+        for (const result of results) {
+            if (result.status === 'fulfilled' && result.value) {
+                quotes.push(result.value);
+            }
+        }
+
+        return quotes;
+    }
+
+    // --------------------------------------------------------
+    // Route Construction
+    // --------------------------------------------------------
+
+    private buildAllDavyRoute(
+        receiveAssetType: string,
+        payAssetType: string,
+        receiveAmount: bigint,
+        legs: DavyLeg[],
+    ): RoutingDecision | null {
+        const totalFilled = legs.reduce((sum, l) => sum + l.fillAmount, 0n);
+        if (totalFilled < receiveAmount) return null; // Insufficient Davy liquidity
+
+        const totalPay = legs.reduce((sum, l) => sum + l.payAmount, 0n);
+        const blended = (totalPay * PRICE_SCALING) / receiveAmount;
 
         return {
-            source: 'davy',
-            offerId: offer.offerId,
-            fillAmount,
-            paymentAmount,
-            effectivePrice: price,
-            reason: `Davy offer ${offer.offerId.slice(0, 8)}... at price ${price}`,
+            receiveAssetType,
+            payAssetType,
+            totalReceiveAmount: totalFilled,
+            totalPayAmount: totalPay,
+            blendedPrice: blended,
+            legs: legs.map((l) => ({
+                venue: 'davy',
+                fillAmount: l.fillAmount,
+                payAmount: l.payAmount,
+                effectivePrice: l.effectivePrice,
+                quote: {
+                    venue: 'davy',
+                    offerId: l.offer.objectId,
+                    offerObjectId: l.offer.objectId,
+                    receiveAmount: l.fillAmount,
+                    payAmount: l.payAmount,
+                    effectivePrice: l.effectivePrice,
+                    fillType: l.fillAmount === l.offer.remainingBalance ? 'full' : 'partial',
+                } as DavyQuote,
+            })),
+            computedAt: Date.now(),
+            isSplit: legs.length > 1,
         };
     }
 
-    /** Query external sources for comparison pricing */
-    private async findBestExternalPrice(intent: CachedIntent): Promise<RoutingDecision | null> {
-        let best: RoutingDecision | null = null;
+    private buildExternalRoute(
+        receiveAssetType: string,
+        payAssetType: string,
+        receiveAmount: bigint,
+        quote: VenueQuote,
+    ): RoutingDecision | null {
+        return {
+            receiveAssetType,
+            payAssetType,
+            totalReceiveAmount: receiveAmount,
+            totalPayAmount: quote.payAmount,
+            blendedPrice: quote.effectivePrice,
+            legs: [{
+                venue: quote.venue,
+                fillAmount: receiveAmount,
+                payAmount: quote.payAmount,
+                effectivePrice: quote.effectivePrice,
+                quote,
+            }],
+            computedAt: Date.now(),
+            isSplit: false,
+        };
+    }
 
-        for (const source of this.externalSources) {
-            const price = await source.getPrice(
-                intent.receiveAssetType,
-                intent.payAssetType,
-                intent.receiveAmount,
+    /**
+     * Build split routes: Davy handles what it can cheaply,
+     * external venues handle the remainder.
+     *
+     * Strategy: For each external venue, compute a split where
+     * Davy fills up to the point where its price is better than
+     * the external venue, and the external venue fills the rest.
+     */
+    private buildSplitRoutes(
+        receiveAssetType: string,
+        payAssetType: string,
+        receiveAmount: bigint,
+        davyLegs: DavyLeg[],
+        externalQuotes: VenueQuote[],
+    ): RoutingDecision[] {
+        const routes: RoutingDecision[] = [];
+
+        for (const extQuote of externalQuotes) {
+            // Find Davy legs that are cheaper than this external venue
+            const cheaperLegs = davyLegs.filter(
+                (l) => l.effectivePrice < extQuote.effectivePrice,
             );
 
-            if (!price) continue;
+            if (cheaperLegs.length === 0) continue;
 
-            const paymentAmount = quotePayAmount(intent.receiveAmount, price);
+            const davyFilled = cheaperLegs.reduce((sum, l) => sum + l.fillAmount, 0n);
+            const davyPay = cheaperLegs.reduce((sum, l) => sum + l.payAmount, 0n);
+            const remaining = receiveAmount - davyFilled;
 
-            if (paymentAmount > intent.maxPayAmount) continue;
-            if (price < intent.minPrice || price > intent.maxPrice) continue;
+            if (remaining <= 0n) continue; // Davy covers everything — already in all-Davy route
+            if (remaining < this.config.minLegAmount) continue;
 
-            if (!best || paymentAmount < best.paymentAmount) {
-                best = {
-                    source: source.name as RoutingDecision['source'],
-                    fillAmount: intent.receiveAmount,
-                    paymentAmount,
-                    effectivePrice: price,
-                    reason: `${source.name} at price ${price}`,
-                };
-            }
+            // Get external quote for the remainder amount
+            const remainderPay = calcPayment(remaining, extQuote.effectivePrice);
+
+            const totalPay = davyPay + remainderPay;
+            const blended = (totalPay * PRICE_SCALING) / receiveAmount;
+
+            const allLegs: RoutingLeg[] = [
+                ...cheaperLegs.map((l) => ({
+                    venue: 'davy' as const,
+                    fillAmount: l.fillAmount,
+                    payAmount: l.payAmount,
+                    effectivePrice: l.effectivePrice,
+                    quote: {
+                        venue: 'davy' as const,
+                        offerId: l.offer.objectId,
+                        offerObjectId: l.offer.objectId,
+                        receiveAmount: l.fillAmount,
+                        payAmount: l.payAmount,
+                        effectivePrice: l.effectivePrice,
+                        fillType: (l.fillAmount === l.offer.remainingBalance
+                            ? 'full'
+                            : 'partial') as 'full' | 'partial',
+                    },
+                })),
+                {
+                    venue: extQuote.venue,
+                    fillAmount: remaining,
+                    payAmount: remainderPay,
+                    effectivePrice: extQuote.effectivePrice,
+                    quote: { ...extQuote, receiveAmount: remaining, payAmount: remainderPay },
+                },
+            ];
+
+            routes.push({
+                receiveAssetType,
+                payAssetType,
+                totalReceiveAmount: receiveAmount,
+                totalPayAmount: totalPay,
+                blendedPrice: blended,
+                legs: allLegs,
+                computedAt: Date.now(),
+                isSplit: true,
+            });
         }
 
-        return best;
+        return routes;
     }
+
+    // --------------------------------------------------------
+    // Utilities
+    // --------------------------------------------------------
+
+    /** Add a venue adapter at runtime */
+    addVenue(venue: ExternalPriceSource): void {
+        this.venues.push(venue);
+    }
+
+    /** Get registered venue names */
+    getVenues(): string[] {
+        return ['davy', ...this.venues.map((v) => v.name)];
+    }
+
+    /** Update router configuration */
+    updateConfig(config: Partial<RouterConfig>): void {
+        Object.assign(this.config, config);
+    }
+}
+
+// ============================================================
+// Internal Types
+// ============================================================
+
+interface DavyLeg {
+    offer: CachedOffer;
+    fillAmount: bigint;
+    payAmount: bigint;
+    effectivePrice: bigint;
 }

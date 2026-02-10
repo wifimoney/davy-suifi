@@ -296,6 +296,12 @@ export interface ExecutionEngineConfig {
 
     /** Slippage tolerance for external venues (basis points) */
     slippageBps?: number;
+
+    /** Revocation registry shared object ID */
+    revocationRegistryId?: string;
+
+    /** Seal policy package ID (enables encrypted intent support) */
+    sealPolicyPackageId?: string;
 }
 
 /** Result of an execution attempt */
@@ -360,12 +366,14 @@ export const FILL_POLICIES = {
 
 export const DAVY_EVENT_TYPES = {
     OFFER_CREATED: 'OfferCreated',
+    OFFER_CREATED_V2: 'OfferCreatedV2',
     OFFER_FILLED: 'OfferFilled',
-    OFFER_PARTIALLY_FILLED: 'OfferPartiallyFilled',
     OFFER_WITHDRAWN: 'OfferWithdrawn',
     OFFER_EXPIRED: 'OfferExpired',
-    INTENT_CREATED: 'IntentCreated',
+    INTENT_SUBMITTED: 'IntentSubmitted',
+    INTENT_SUBMITTED_V2: 'IntentSubmittedV2',
     INTENT_EXECUTED: 'IntentExecuted',
     INTENT_CANCELLED: 'IntentCancelled',
     INTENT_EXPIRED: 'IntentExpired',
+    ENCRYPTED_INTENT_SUBMITTED: 'EncryptedIntentSubmitted',
 } as const;

@@ -58,7 +58,7 @@ export class OfferCache {
         try {
             // Try WebSocket subscription first
             this.subscriptionId = await this.client.subscribeEvent({
-                filter: { Package: this.packageId },
+                filter: { Package: this.packageId } as any,
                 onMessage: (event: SuiEvent) => this.processEvent(event),
             });
         } catch {
@@ -73,7 +73,12 @@ export class OfferCache {
         this.isRunning = false;
         if (this.subscriptionId) {
             try {
-                await this.client.unsubscribeEvent({ id: this.subscriptionId });
+                // Determine if we have an unsubscribe capability
+                if (typeof this.subscriptionId === 'function') {
+                    await this.subscriptionId();
+                } else if ((this.client as any).unsubscribeEvent) {
+                    await (this.client as any).unsubscribeEvent({ id: this.subscriptionId });
+                }
             } catch {
                 // Ignore unsubscribe errors
             }
@@ -88,8 +93,8 @@ export class OfferCache {
 
             try {
                 const result = await this.client.queryEvents({
-                    query: { Package: this.packageId },
-                    cursor: this.lastCursor ?? undefined,
+                    query: { MoveEventModule: { package: this.packageId, module: 'events' } } as any, // Filter by events module
+                    cursor: this.lastCursor as any,
                     order: 'ascending',
                     limit: 50,
                 });
@@ -127,18 +132,19 @@ export class OfferCache {
 
         switch (eventType) {
             case DAVY_EVENT_TYPES.OFFER_CREATED:
+            case DAVY_EVENT_TYPES.OFFER_CREATED_V2:
                 this.offers.set(data.offer_id, {
                     objectId: data.offer_id,
                     maker: data.maker,
-                    offerAssetType: data.offer_asset_type ?? '',
-                    wantAssetType: data.want_asset_type ?? '',
-                    remainingBalance: BigInt(data.amount ?? '0'),
-                    initialBalance: BigInt(data.amount ?? '0'),
+                    offerAssetType: data.offer_asset?.name || data.offer_asset_type || '',
+                    wantAssetType: data.want_asset?.name || data.want_asset_type || '',
+                    remainingBalance: BigInt(data.amount || data.initial_offer_amount || '0'),
+                    initialBalance: BigInt(data.amount || data.initial_offer_amount || '0'),
                     minPrice: BigInt(data.min_price ?? '0'),
                     maxPrice: BigInt(data.max_price ?? '0'),
                     fillPolicy: Number(data.fill_policy ?? 0),
                     minFillAmount: BigInt(data.min_fill_amount ?? '0'),
-                    expiryMs: BigInt(data.expiry_ms ?? '0'),
+                    expiryMs: BigInt(data.expiry_ms || data.expiry_timestamp_ms || '0'),
                     status: 'Created',
                     lastUpdatedAt: now,
                 });
@@ -151,19 +157,6 @@ export class OfferCache {
                     lastUpdatedAt: now,
                 });
                 break;
-
-            case DAVY_EVENT_TYPES.OFFER_PARTIALLY_FILLED: {
-                const offer = this.offers.get(data.offer_id);
-                if (offer) {
-                    const fillAmount = BigInt(data.fill_amount ?? '0');
-                    this.updateOffer(data.offer_id, {
-                        status: 'PartiallyFilled',
-                        remainingBalance: offer.remainingBalance - fillAmount,
-                        lastUpdatedAt: now,
-                    });
-                }
-                break;
-            }
 
             case DAVY_EVENT_TYPES.OFFER_WITHDRAWN:
                 this.updateOffer(data.offer_id, {
@@ -180,17 +173,34 @@ export class OfferCache {
                 });
                 break;
 
-            case DAVY_EVENT_TYPES.INTENT_CREATED:
+            case DAVY_EVENT_TYPES.INTENT_SUBMITTED:
+            case DAVY_EVENT_TYPES.INTENT_SUBMITTED_V2:
                 this.intents.set(data.intent_id, {
                     objectId: data.intent_id,
                     creator: data.creator,
-                    receiveAssetType: data.receive_asset_type ?? '',
-                    payAssetType: data.pay_asset_type ?? '',
+                    receiveAssetType: data.receive_asset?.name || data.receive_asset_type || '',
+                    payAssetType: data.pay_asset?.name || data.pay_asset_type || '',
                     receiveAmount: BigInt(data.receive_amount ?? '0'),
                     maxPayAmount: BigInt(data.max_pay_amount ?? '0'),
                     minPrice: BigInt(data.min_price ?? '0'),
                     maxPrice: BigInt(data.max_price ?? '0'),
-                    expiryMs: BigInt(data.expiry_ms ?? '0'),
+                    expiryMs: BigInt(data.expiry_ms || data.expiry_timestamp_ms || '0'),
+                    status: 'Pending',
+                    lastUpdatedAt: now,
+                });
+                break;
+
+            case DAVY_EVENT_TYPES.ENCRYPTED_INTENT_SUBMITTED:
+                this.intents.set(data.intent_id, {
+                    objectId: data.intent_id,
+                    creator: data.creator,
+                    receiveAssetType: data.receive_asset?.name || '',
+                    payAssetType: data.pay_asset?.name || '',
+                    receiveAmount: 0n, // sentinel for encrypted
+                    maxPayAmount: BigInt(data.max_pay_amount ?? '0'),
+                    minPrice: 0n, // sentinel for encrypted
+                    maxPrice: 0n, // sentinel for encrypted
+                    expiryMs: BigInt(data.expiry_timestamp_ms ?? '0'),
                     status: 'Pending',
                     lastUpdatedAt: now,
                 });
