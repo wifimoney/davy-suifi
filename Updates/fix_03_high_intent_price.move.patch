@@ -1,0 +1,107 @@
+// =============================================================================
+// FIX #3 — HIGH: Intent Always Fills at Worst Price for Maker
+// =============================================================================
+//
+// PROBLEM:
+//   execute_against_offer() hardcodes offer.min_price for payment calculation.
+//   Maker always gets minimum rate regardless of market conditions.
+//
+// FIX:
+//   Add execute_against_offer_v2() with an explicit execution_price parameter.
+//   The executor specifies the price, validated against BOTH offer and intent
+//   bounds. Original function remains for backward compatibility.
+//
+// UPGRADE COMPATIBLE: Yes — additive function, no signature changes.
+//
+// FILE: sources/intent.move
+// =============================================================================
+
+// ---------- Add after existing execute_against_offer function ----------
+
+    /// Execute an intent against a specific offer with explicit price.
+    /// V2: executor specifies price, validated against both offer and intent bounds.
+    /// This ensures makers receive fair market price, not just their minimum.
+    public fun execute_against_offer_v2<ReceiveAsset, PayAsset>(
+        intent: &mut ExecutionIntent<ReceiveAsset, PayAsset>,
+        offer: &mut LiquidityOffer<ReceiveAsset, PayAsset>,
+        _exec_cap: &ExecutorCap,
+        execution_price: u64,
+        clock: &Clock,
+        ctx: &mut TxContext,
+    ) {
+        // 1. Validation: Intent status & expiry
+        assert!(intent.status == STATUS_PENDING, errors::intent_not_pending());
+        assert!(clock::timestamp_ms(clock) < intent.expiry_timestamp_ms, errors::intent_expired());
+
+        // 2. Validation: Offer availability
+        assert!(offer::is_fillable(offer, clock), errors::offer_not_fillable());
+
+        // 3. Validation: Price within BOTH offer and intent bounds
+        let (offer_min_price, offer_max_price) = offer::price_bounds(offer);
+        assert!(execution_price >= offer_min_price, errors::price_mismatch());
+        assert!(execution_price <= offer_max_price, errors::price_mismatch());
+        assert!(execution_price >= intent.min_price, errors::price_mismatch());
+        assert!(execution_price <= intent.max_price, errors::price_mismatch());
+
+        // 4. Validation: Liquidity & Escrow
+        let fill_amount = intent.receive_amount;
+        assert!(offer::remaining_amount(offer) >= fill_amount, errors::insufficient_liquidity());
+
+        let payment_required = offer::calc_payment(fill_amount, execution_price);
+        assert!(balance::value(&intent.escrow) >= payment_required, errors::insufficient_escrowed());
+
+        // 5. Execution: Split payment and fill offer
+        let payment_balance = balance::split(&mut intent.escrow, payment_required);
+        let payment_coin = coin::from_balance(payment_balance, ctx);
+
+        // Perform the fill (low-level primitives)
+        // NOTE: After Fix #1, payment auto-settles to maker inside fill_full/fill_partial.
+        // The returned payment_coin is zero-value.
+        let (receipt, zero_payment) = if (fill_amount == offer::remaining_amount(offer)) {
+            offer::fill_full(offer, payment_coin, clock, ctx)
+        } else {
+            offer::fill_partial(offer, fill_amount, payment_coin, clock, ctx)
+        };
+
+        // Settle: OfferAsset → intent creator
+        let (offer_coin, _, _, _, _) = offer::unpack_receipt(receipt, ctx);
+        transfer::public_transfer(offer_coin, intent.creator);
+        // Destroy zero-value payment coin (payment already sent to maker in fill)
+        coin::destroy_zero(zero_payment);
+
+        // 6. Cleanup: Transition intent status
+        intent.status = STATUS_EXECUTED;
+
+        // 7. Distribution: Refund remaining escrow to creator
+        let refund_amount = balance::value(&intent.escrow);
+        if (refund_amount > 0) {
+            let refund_balance = balance::withdraw_all(&mut intent.escrow);
+            transfer::public_transfer(coin::from_balance(refund_balance, ctx), intent.creator);
+        };
+
+        let intent_id = object::uid_to_inner(&intent.id);
+        events::emit_intent_executed(
+            intent_id,
+            tx_context::sender(ctx),
+            object::id(offer),
+            fill_amount,
+            payment_required,
+            execution_price,
+            refund_amount,
+        );
+    }
+
+
+// =============================================================================
+// ALSO: Update the original execute_against_offer to use offer's min_price
+// more transparently. Add a comment making the behavior explicit.
+// This is optional but improves auditability.
+// =============================================================================
+
+// FIND in execute_against_offer (comment block):
+        // Price check: Offer's current price (min_price) must be within Intent bounds
+
+// REPLACE WITH:
+        // ⚠️ DEPRECATED: Use execute_against_offer_v2 with explicit price.
+        // This function always fills at offer's min_price (worst rate for maker).
+        // Price check: Offer's min_price must be within Intent bounds

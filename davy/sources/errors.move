@@ -5,7 +5,7 @@
 /// ## Ranges
 ///   - `1xx` — Offer errors (creation, fills, lifecycle)
 ///   - `2xx` — Intent errors (execution, escrow, lifecycle)
-///   - `3xx` — Capability errors (minting)
+///   - `3xx` — Capability errors (minting, revocation)
 ///   - `4xx` — Pool errors (membership)
 module davy::errors {
     // ===== Offer Errors (100-199) =====
@@ -113,6 +113,22 @@ module davy::errors {
     const EEMPTY_LABEL: u64 = 300;
     public fun empty_label(): u64 { EEMPTY_LABEL }
 
+    /// Attempted to revoke an ExecutorCap that is already in the registry.
+    const ECAP_ALREADY_REVOKED: u64 = 301;
+    public fun cap_already_revoked(): u64 { ECAP_ALREADY_REVOKED }
+
+    /// Attempted to revoke a PartialFillCap that is already in the registry.
+    const EPARTIAL_CAP_ALREADY_REVOKED: u64 = 302;
+    public fun partial_cap_already_revoked(): u64 { EPARTIAL_CAP_ALREADY_REVOKED }
+
+    /// ExecutorCap or PartialFillCap has been revoked by admin.
+    const EREVOKED_CAP: u64 = 303;
+    public fun revoked_cap(): u64 { EREVOKED_CAP }
+
+    /// Attempted to un-revoke a cap ID not in the registry.
+    const EREVOCATION_NOT_FOUND: u64 = 304;
+    public fun revocation_not_found(): u64 { EREVOCATION_NOT_FOUND }
+
     // ===== Pool Errors (400-499) =====
 
     const EEMPTY_POOL_NAME: u64 = 400;
@@ -126,4 +142,8 @@ module davy::errors {
 
     const EOFFER_NOT_IN_POOL: u64 = 403;
     public fun offer_not_in_pool(): u64 { EOFFER_NOT_IN_POOL }
+
+    /// Pool has reached maximum capacity (1000 offers).
+    const EPOOL_FULL: u64 = 404;
+    public fun pool_full(): u64 { EPOOL_FULL }
 }

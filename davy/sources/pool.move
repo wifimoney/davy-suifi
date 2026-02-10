@@ -9,13 +9,22 @@
 ///
 /// ## Access Control
 ///   Creator-only membership management prevents spam/griefing.
+///
+/// ## Size Limit (v2)
+///   Pools are capped at MAX_POOL_SIZE (1000) entries to prevent
+///   object bloat. Creator can create additional pools if needed.
 module davy::pool {
     use sui::vec_set::{Self, VecSet};
 
     use davy::errors;
     use davy::events;
 
-    // ===== Core Struct (5.1) =====
+    // ===== Constants =====
+
+    /// Maximum number of offer IDs per pool. (Fix #8)
+    const MAX_POOL_SIZE: u64 = 1000;
+
+    // ===== Core Struct =====
 
     /// A non-authoritative index of offer IDs.
     /// Shared object — anyone can read; creator manages membership.
@@ -32,7 +41,7 @@ module davy::pool {
         creator: address,
     }
 
-    // ===== create (5.2) =====
+    // ===== create =====
 
     /// Create an empty coordination pool with a name.
     /// The pool is shared — anyone can read it.
@@ -60,13 +69,14 @@ module davy::pool {
         transfer::public_share_object(pool);
     }
 
-    // ===== add_offer + remove_offer (5.3) =====
+    // ===== add_offer + remove_offer =====
 
     /// Add an offer ID to the pool index.
     /// Only the pool creator can add offers.
     ///
     /// Aborts:
     ///   - 401 if offer ID is already in the pool
+    ///   - 404 if pool is at capacity (1000) [Fix #8]
     public fun add_offer<OfferAsset, WantAsset>(
         pool: &mut CoordinationPool<OfferAsset, WantAsset>,
         offer_id: ID,
@@ -74,6 +84,7 @@ module davy::pool {
     ) {
         assert!(tx_context::sender(ctx) == pool.creator, errors::not_pool_creator());
         assert!(!vec_set::contains(&pool.offer_ids, &offer_id), errors::offer_already_in_pool());
+        assert!(vec_set::length(&pool.offer_ids) < MAX_POOL_SIZE, errors::pool_full());
 
         vec_set::insert(&mut pool.offer_ids, offer_id);
 
@@ -100,7 +111,7 @@ module davy::pool {
         events::emit_offer_removed_from_pool(pool_id, offer_id, tx_context::sender(ctx));
     }
 
-    // ===== View Functions (5.4) =====
+    // ===== View Functions =====
 
     /// Returns the set of offer IDs in the pool.
     public fun offer_ids<OfferAsset, WantAsset>(

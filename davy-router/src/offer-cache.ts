@@ -1,120 +1,359 @@
 /**
- * Davy Protocol — Offer Cache
+ * Davy Protocol — Phase 8: Offer Cache
  *
- * Maintains an in-memory cache of Davy offers, updated from events.
- * In production, this would be backed by a database and fed by
- * a Sui event subscription (sui_subscribeEvent).
+ * Event-driven in-memory cache that reconstructs the complete state
+ * of all Davy offers and intents by subscribing to on-chain events.
+ *
+ * The cache provides the router with instant access to active offers
+ * for price comparison without RPC object fetches.
+ *
+ * Event types consumed:
+ *   OfferCreated, OfferFilled, OfferPartiallyFilled,
+ *   OfferWithdrawn, OfferExpired,
+ *   IntentCreated, IntentExecuted, IntentCancelled, IntentExpired
  */
 
-import { CachedOffer, OfferStatus, FillPolicy } from './types.js';
+import type { SuiClient, SuiEvent } from '@mysten/sui/client';
+import {
+    CachedOffer,
+    CachedIntent,
+    OfferStatus,
+    IntentStatus,
+    DAVY_EVENT_TYPES,
+} from './types.js';
+
+// ============================================================
+// Cache
+// ============================================================
 
 export class OfferCache {
-    private offers = new Map<string, CachedOffer>();
+    private offers: Map<string, CachedOffer> = new Map();
+    private intents: Map<string, CachedIntent> = new Map();
+    private client: SuiClient;
+    private packageId: string;
+    private subscriptionId: any = null;
+    private lastCursor: string | null = null;
+    private isRunning = false;
 
-    /** Process an OfferCreated event */
-    onOfferCreated(event: {
-        offerId: string;
-        maker: string;
-        offerAssetType: string;
-        wantAssetType: string;
-        initialAmount: bigint;
-        minPrice: bigint;
-        maxPrice: bigint;
-        fillPolicy: number;
-        minFillAmount: bigint;
-        expiryTimestampMs: number;
-    }): void {
-        this.offers.set(event.offerId, {
-            offerId: event.offerId,
-            maker: event.maker,
-            offerAssetType: event.offerAssetType,
-            wantAssetType: event.wantAssetType,
-            initialAmount: event.initialAmount,
-            remainingAmount: event.initialAmount,
-            minPrice: event.minPrice,
-            maxPrice: event.maxPrice,
-            fillPolicy: event.fillPolicy as FillPolicy,
-            minFillAmount: event.minFillAmount,
-            expiryTimestampMs: event.expiryTimestampMs,
-            status: OfferStatus.Created,
-            totalFilled: 0n,
-            fillCount: 0,
-        });
+    constructor(config: {
+        client: SuiClient;
+        packageId: string;
+    }) {
+        this.client = config.client;
+        this.packageId = config.packageId;
     }
 
-    /** Process an OfferFilled event */
-    onOfferFilled(event: {
-        offerId: string;
-        fillAmount: bigint;
-        isFull: boolean;
-        remaining: bigint;
-    }): void {
-        const offer = this.offers.get(event.offerId);
-        if (!offer) return;
+    // --------------------------------------------------------
+    // Lifecycle
+    // --------------------------------------------------------
 
-        offer.remainingAmount = event.remaining;
-        offer.totalFilled += event.fillAmount;
-        offer.fillCount += 1;
-        offer.status = event.isFull
-            ? OfferStatus.Filled
-            : OfferStatus.PartiallyFilled;
+    /**
+     * Start the event subscription.
+     * Uses WebSocket subscription if available, falls back to polling.
+     */
+    async start(): Promise<void> {
+        if (this.isRunning) return;
+        this.isRunning = true;
+
+        try {
+            // Try WebSocket subscription first
+            this.subscriptionId = await this.client.subscribeEvent({
+                filter: { Package: this.packageId },
+                onMessage: (event: SuiEvent) => this.processEvent(event),
+            });
+        } catch {
+            // Fallback to polling
+            console.warn('[OfferCache] WebSocket unavailable, falling back to polling');
+            this.startPolling();
+        }
     }
 
-    /** Process an OfferWithdrawn event */
-    onOfferWithdrawn(offerId: string): void {
-        const offer = this.offers.get(offerId);
-        if (offer) offer.status = OfferStatus.Withdrawn;
+    /** Stop the event subscription. */
+    async stop(): Promise<void> {
+        this.isRunning = false;
+        if (this.subscriptionId) {
+            try {
+                await this.client.unsubscribeEvent({ id: this.subscriptionId });
+            } catch {
+                // Ignore unsubscribe errors
+            }
+            this.subscriptionId = null;
+        }
     }
 
-    /** Process an OfferExpired event */
-    onOfferExpired(offerId: string): void {
-        const offer = this.offers.get(offerId);
-        if (offer) offer.status = OfferStatus.Expired;
+    /** Poll for new events (fallback when WebSocket is unavailable) */
+    private startPolling(intervalMs: number = 2000): void {
+        const poll = async () => {
+            if (!this.isRunning) return;
+
+            try {
+                const result = await this.client.queryEvents({
+                    query: { Package: this.packageId },
+                    cursor: this.lastCursor ?? undefined,
+                    order: 'ascending',
+                    limit: 50,
+                });
+
+                for (const event of result.data) {
+                    this.processEvent(event);
+                }
+
+                if (result.nextCursor) {
+                    this.lastCursor = result.nextCursor as any;
+                }
+            } catch (err) {
+                console.error('[OfferCache] Polling error:', err);
+            }
+
+            if (this.isRunning) {
+                setTimeout(poll, intervalMs);
+            }
+        };
+
+        poll();
     }
 
-    /** Get a specific offer */
-    get(offerId: string): CachedOffer | undefined {
+    // --------------------------------------------------------
+    // Event Processing
+    // --------------------------------------------------------
+
+    private processEvent(event: SuiEvent): void {
+        const eventType = event.type.split('::').pop() ?? '';
+        const data = event.parsedJson as any;
+
+        if (!data) return;
+
+        const now = Date.now();
+
+        switch (eventType) {
+            case DAVY_EVENT_TYPES.OFFER_CREATED:
+                this.offers.set(data.offer_id, {
+                    objectId: data.offer_id,
+                    maker: data.maker,
+                    offerAssetType: data.offer_asset_type ?? '',
+                    wantAssetType: data.want_asset_type ?? '',
+                    remainingBalance: BigInt(data.amount ?? '0'),
+                    initialBalance: BigInt(data.amount ?? '0'),
+                    minPrice: BigInt(data.min_price ?? '0'),
+                    maxPrice: BigInt(data.max_price ?? '0'),
+                    fillPolicy: Number(data.fill_policy ?? 0),
+                    minFillAmount: BigInt(data.min_fill_amount ?? '0'),
+                    expiryMs: BigInt(data.expiry_ms ?? '0'),
+                    status: 'Created',
+                    lastUpdatedAt: now,
+                });
+                break;
+
+            case DAVY_EVENT_TYPES.OFFER_FILLED:
+                this.updateOffer(data.offer_id, {
+                    status: 'Filled',
+                    remainingBalance: 0n,
+                    lastUpdatedAt: now,
+                });
+                break;
+
+            case DAVY_EVENT_TYPES.OFFER_PARTIALLY_FILLED: {
+                const offer = this.offers.get(data.offer_id);
+                if (offer) {
+                    const fillAmount = BigInt(data.fill_amount ?? '0');
+                    this.updateOffer(data.offer_id, {
+                        status: 'PartiallyFilled',
+                        remainingBalance: offer.remainingBalance - fillAmount,
+                        lastUpdatedAt: now,
+                    });
+                }
+                break;
+            }
+
+            case DAVY_EVENT_TYPES.OFFER_WITHDRAWN:
+                this.updateOffer(data.offer_id, {
+                    status: 'Withdrawn',
+                    remainingBalance: 0n,
+                    lastUpdatedAt: now,
+                });
+                break;
+
+            case DAVY_EVENT_TYPES.OFFER_EXPIRED:
+                this.updateOffer(data.offer_id, {
+                    status: 'Expired',
+                    lastUpdatedAt: now,
+                });
+                break;
+
+            case DAVY_EVENT_TYPES.INTENT_CREATED:
+                this.intents.set(data.intent_id, {
+                    objectId: data.intent_id,
+                    creator: data.creator,
+                    receiveAssetType: data.receive_asset_type ?? '',
+                    payAssetType: data.pay_asset_type ?? '',
+                    receiveAmount: BigInt(data.receive_amount ?? '0'),
+                    maxPayAmount: BigInt(data.max_pay_amount ?? '0'),
+                    minPrice: BigInt(data.min_price ?? '0'),
+                    maxPrice: BigInt(data.max_price ?? '0'),
+                    expiryMs: BigInt(data.expiry_ms ?? '0'),
+                    status: 'Pending',
+                    lastUpdatedAt: now,
+                });
+                break;
+
+            case DAVY_EVENT_TYPES.INTENT_EXECUTED:
+                this.updateIntent(data.intent_id, {
+                    status: 'Executed',
+                    lastUpdatedAt: now,
+                });
+                break;
+
+            case DAVY_EVENT_TYPES.INTENT_CANCELLED:
+                this.updateIntent(data.intent_id, {
+                    status: 'Cancelled',
+                    lastUpdatedAt: now,
+                });
+                break;
+
+            case DAVY_EVENT_TYPES.INTENT_EXPIRED:
+                this.updateIntent(data.intent_id, {
+                    status: 'Expired',
+                    lastUpdatedAt: now,
+                });
+                break;
+        }
+    }
+
+    private updateOffer(id: string, updates: Partial<CachedOffer>): void {
+        const existing = this.offers.get(id);
+        if (existing) {
+            Object.assign(existing, updates);
+        }
+    }
+
+    private updateIntent(id: string, updates: Partial<CachedIntent>): void {
+        const existing = this.intents.get(id);
+        if (existing) {
+            Object.assign(existing, updates);
+        }
+    }
+
+    // --------------------------------------------------------
+    // Queries
+    // --------------------------------------------------------
+
+    /**
+     * Get all active (fillable) offers for a given asset pair.
+     * Filters out expired, filled, and withdrawn offers.
+     */
+    getActiveOffers(
+        offerAssetType: string,
+        wantAssetType: string,
+    ): CachedOffer[] {
+        const now = BigInt(Date.now());
+        const result: CachedOffer[] = [];
+
+        for (const offer of this.offers.values()) {
+            if (
+                offer.offerAssetType === offerAssetType &&
+                offer.wantAssetType === wantAssetType &&
+                (offer.status === 'Created' || offer.status === 'PartiallyFilled') &&
+                offer.expiryMs > now &&
+                offer.remainingBalance > 0n
+            ) {
+                result.push(offer);
+            }
+        }
+
+        return result;
+    }
+
+    /**
+     * Get all active offers sorted by price (best price first = lowest for buyer).
+     */
+    getActiveOffersSorted(
+        offerAssetType: string,
+        wantAssetType: string,
+    ): CachedOffer[] {
+        return this.getActiveOffers(offerAssetType, wantAssetType)
+            .sort((a, b) => {
+                // Sort by min_price ascending (cheapest first)
+                if (a.minPrice < b.minPrice) return -1;
+                if (a.minPrice > b.minPrice) return 1;
+                // Tie-break: larger balance first
+                if (a.remainingBalance > b.remainingBalance) return -1;
+                if (a.remainingBalance < b.remainingBalance) return 1;
+                return 0;
+            });
+    }
+
+    /**
+     * Get all pending intents (not yet executed, cancelled, or expired).
+     */
+    getPendingIntents(): CachedIntent[] {
+        const now = BigInt(Date.now());
+        const result: CachedIntent[] = [];
+
+        for (const intent of this.intents.values()) {
+            if (intent.status === 'Pending' && intent.expiryMs > now) {
+                result.push(intent);
+            }
+        }
+
+        return result;
+    }
+
+    /**
+     * Get pending intents for a specific asset pair.
+     */
+    getPendingIntentsForPair(
+        receiveAssetType: string,
+        payAssetType: string,
+    ): CachedIntent[] {
+        return this.getPendingIntents().filter(
+            (i) =>
+                i.receiveAssetType === receiveAssetType &&
+                i.payAssetType === payAssetType,
+        );
+    }
+
+    /**
+     * Get a single offer by ID.
+     */
+    getOffer(offerId: string): CachedOffer | undefined {
         return this.offers.get(offerId);
     }
 
     /**
-     * Find all fillable offers for a given asset pair.
-     * Returns offers sorted by best price (lowest minPrice first).
+     * Get a single intent by ID.
      */
-    findFillableOffers(
-        offerAssetType: string,
-        wantAssetType: string,
-        nowMs: number,
-    ): CachedOffer[] {
-        const results: CachedOffer[] = [];
-
-        for (const offer of this.offers.values()) {
-            if (offer.offerAssetType !== offerAssetType) continue;
-            if (offer.wantAssetType !== wantAssetType) continue;
-            if (offer.status !== OfferStatus.Created && offer.status !== OfferStatus.PartiallyFilled) continue;
-            if (offer.expiryTimestampMs <= nowMs) continue;
-            if (offer.remainingAmount === 0n) continue;
-
-            results.push(offer);
-        }
-
-        // Sort by min_price ascending (cheapest first)
-        results.sort((a, b) => {
-            if (a.minPrice < b.minPrice) return -1;
-            if (a.minPrice > b.minPrice) return 1;
-            return 0;
-        });
-
-        return results;
+    getIntent(intentId: string): CachedIntent | undefined {
+        return this.intents.get(intentId);
     }
 
-    /** Upsert an offer (used for bulk loading) */
-    upsert(offer: CachedOffer): void {
-        this.offers.set(offer.offerId, offer);
-    }
+    // --------------------------------------------------------
+    // Stats
+    // --------------------------------------------------------
 
-    /** Total offers in cache */
-    get size(): number {
+    get offerCount(): number {
         return this.offers.size;
+    }
+
+    get activeOfferCount(): number {
+        const now = BigInt(Date.now());
+        let count = 0;
+        for (const o of this.offers.values()) {
+            if ((o.status === 'Created' || o.status === 'PartiallyFilled') && o.expiryMs > now) {
+                count++;
+            }
+        }
+        return count;
+    }
+
+    get pendingIntentCount(): number {
+        return this.getPendingIntents().length;
+    }
+
+    /** Dump cache state for debugging */
+    dump(): { offers: CachedOffer[]; intents: CachedIntent[] } {
+        return {
+            offers: [...this.offers.values()],
+            intents: [...this.intents.values()],
+        };
     }
 }

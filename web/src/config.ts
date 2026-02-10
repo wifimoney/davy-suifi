@@ -9,12 +9,13 @@ export const DAVY_CONFIG = {
     // Network
     network: process.env.NEXT_PUBLIC_SUI_NETWORK || 'testnet',
 
-    // Package ID
-    packageId: '0xf69318140671d96b322d284301343091d030c1ad2d22bcdeb0e5dded356e5ecf',
+    // Package ID (Mainnet Upgrade 2026-02-10)
+    packageId: '0xd066082103e81d89e645d9b52b2ec7bbf08a73eca04aeeeba5e5cb240764d705',
 
     // Shared Objects
-    adminCap: '0x72553cbedf73c71e2a1a7d178b0148bf5991609e140d48f9f03700c6d3b2cb75',
-    upgradeCap: '0x7ec1fda4a77943f53d8cbc178408c47a49422ee9987ae56f40af60d839bf7dcc',
+    adminCap: '0xdcb54d1a4a25834e91692f93347a20b75cfcfbbbae8f261f69715c493bad53e4',
+    upgradeCap: '0xa83899812743da0e2a3a4780a38fd447d00fbe8ba40f5c6cca36e1a0b17aa9f7',
+    revocationRegistry: '0x0f8eb4b33d0bd59d3344f57c116ae0683e5178e00aa3a9dfb432ef3a7910d9c1',
 
     // Pools
     pools: {

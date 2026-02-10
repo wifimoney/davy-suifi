@@ -1,0 +1,42 @@
+// =============================================================================
+// FIX #8 — LOW: Unbounded Pool Size
+// =============================================================================
+//
+// PROBLEM:
+//   No cap on VecSet size in CoordinationPool. A creator could add thousands
+//   of IDs, making the pool object expensive to load/deserialize.
+//   Since only the creator can add, this is self-griefing only.
+//
+// FIX:
+//   Add a MAX_POOL_SIZE constant and check in add_offer().
+//
+// UPGRADE COMPATIBLE: Yes — body-only change to add_offer().
+//
+// FILE: sources/pool.move
+// =============================================================================
+
+// ---------- Add constant at top of module ----------
+
+    /// Maximum number of offer IDs per pool.
+    /// Prevents object size bloat. Creator can create additional pools.
+    const MAX_POOL_SIZE: u64 = 1000;
+
+
+// ---------- Add error constant in errors.move ----------
+
+    const EPOOL_FULL: u64 = 404;
+    public fun pool_full(): u64 { EPOOL_FULL }
+
+
+// ---------- In pool.move add_offer(), add before the insert ----------
+//
+// FIND:
+        assert!(!vec_set::contains(&pool.offer_ids, &offer_id), errors::offer_already_in_pool());
+
+        vec_set::insert(&mut pool.offer_ids, offer_id);
+
+// REPLACE WITH:
+        assert!(!vec_set::contains(&pool.offer_ids, &offer_id), errors::offer_already_in_pool());
+        assert!(vec_set::length(&pool.offer_ids) < MAX_POOL_SIZE, errors::pool_full());
+
+        vec_set::insert(&mut pool.offer_ids, offer_id);

@@ -5,13 +5,17 @@
 /// min_price and max_price of PayAsset."
 ///
 /// Execution is delegated to authorized entities (ExecutorCap).
+///
+/// ## V2 Functions (Security Upgrade)
+///   - execute_against_offer_v2: explicit price parameter, revocation check
+///   - execute_against_gated_offer: supports FILL_POLICY_PARTIAL_GATED offers
 module davy::intent {
     use sui::coin::{Self, Coin};
     use sui::balance::{Self, Balance};
     use sui::clock::{Self, Clock};
 
     use davy::offer::{Self, LiquidityOffer};
-    use davy::capability::{ExecutorCap};
+    use davy::capability::{Self, ExecutorCap, RevocationRegistry};
     use davy::errors;
     use davy::events;
     use std::type_name;
@@ -76,14 +80,14 @@ module davy::intent {
         };
 
         let intent_id = object::uid_to_inner(&intent.id);
-        events::emit_intent_submitted(
+        events::emit_intent_submitted_v2(
             intent_id,
             creator,
             type_name::get<ReceiveAsset>(),
             type_name::get<PayAsset>(),
             receive_amount,
-            payment_amount,  // max_pay_amount (conceptually)
-            payment_amount,  // escrowed_amount (actual balance)
+            payment_amount,
+            payment_amount,
             min_price,
             max_price,
             expiry,
@@ -93,7 +97,12 @@ module davy::intent {
     }
 
     /// Execute an intent against a specific offer.
+    /// ⚠️ DEPRECATED: Use execute_against_offer_v2 for explicit price control.
+    /// This function always fills at offer's min_price (worst rate for maker).
     /// Requires ExecutorCap (authorized bot/DAO).
+    ///
+    /// NOTE (v2 upgrade): Payment is now auto-settled to maker inside
+    /// fill_full/fill_partial. The returned payment coin is zero-value.
     public fun execute_against_offer<ReceiveAsset, PayAsset>(
         intent: &mut ExecutionIntent<ReceiveAsset, PayAsset>,
         offer: &mut LiquidityOffer<ReceiveAsset, PayAsset>,
@@ -109,7 +118,8 @@ module davy::intent {
         assert!(offer::is_fillable(offer, clock), errors::offer_not_fillable());
         let (offer_min_price, _offer_max_price) = offer::price_bounds(offer);
         
-        // Price check: Offer's current price (min_price) must be within Intent bounds
+        // ⚠️ DEPRECATED: Always fills at offer's min_price (worst rate for maker).
+        // Use execute_against_offer_v2 with explicit price instead.
         assert!(offer_min_price >= intent.min_price, errors::price_mismatch());
         assert!(offer_min_price <= intent.max_price, errors::price_mismatch());
 
@@ -124,17 +134,18 @@ module davy::intent {
         let payment_balance = balance::split(&mut intent.escrow, payment_required);
         let payment_coin = coin::from_balance(payment_balance, ctx);
 
-        // Perform the fill (low-level primitives)
-        let (receipt, payment_coin) = if (fill_amount == offer::remaining_amount(offer)) {
+        // Fill (payment auto-settles to maker; returned coin is zero-value)
+        let (receipt, zero_payment) = if (fill_amount == offer::remaining_amount(offer)) {
             offer::fill_full(offer, payment_coin, clock, ctx)
         } else {
             offer::fill_partial(offer, fill_amount, payment_coin, clock, ctx)
         };
 
-        // Settle manually to ensure assets go to intent creator, not executor
+        // Settle: OfferAsset → intent creator
         let (offer_coin, _, _, _, _) = offer::unpack_receipt(receipt, ctx);
         transfer::public_transfer(offer_coin, intent.creator);
-        transfer::public_transfer(payment_coin, offer::maker(offer));
+        // Destroy zero-value payment coin (payment already sent to maker in fill)
+        coin::destroy_zero(zero_payment);
 
         // 5. Cleanup: Transition intent status
         intent.status = STATUS_EXECUTED;
@@ -154,6 +165,170 @@ module davy::intent {
             fill_amount,
             payment_required,
             offer_min_price,
+            refund_amount,
+        );
+    }
+
+    // ===== V2: Explicit Price + Revocation Check (Fix #3, #4) =====
+
+    /// Execute an intent against a specific offer with explicit price.
+    /// V2: Executor specifies price, validated against both offer AND intent bounds.
+    /// Checks RevocationRegistry to reject revoked ExecutorCaps.
+    public fun execute_against_offer_v2<ReceiveAsset, PayAsset>(
+        intent: &mut ExecutionIntent<ReceiveAsset, PayAsset>,
+        offer: &mut LiquidityOffer<ReceiveAsset, PayAsset>,
+        exec_cap: &ExecutorCap,
+        registry: &RevocationRegistry,
+        execution_price: u64,
+        clock: &Clock,
+        ctx: &mut TxContext,
+    ) {
+        // Revocation check (Fix #4)
+        assert!(
+            !capability::is_executor_cap_revoked(registry, object::id(exec_cap)),
+            errors::revoked_cap(),
+        );
+
+        // 1. Validation: Intent status & expiry
+        assert!(intent.status == STATUS_PENDING, errors::intent_not_pending());
+        assert!(clock::timestamp_ms(clock) < intent.expiry_timestamp_ms, errors::intent_expired());
+
+        // 2. Validation: Offer availability
+        assert!(offer::is_fillable(offer, clock), errors::offer_not_fillable());
+
+        // 3. Validation: Price within BOTH offer and intent bounds (Fix #3)
+        let (offer_min_price, offer_max_price) = offer::price_bounds(offer);
+        assert!(execution_price >= offer_min_price, errors::price_mismatch());
+        assert!(execution_price <= offer_max_price, errors::price_mismatch());
+        assert!(execution_price >= intent.min_price, errors::price_mismatch());
+        assert!(execution_price <= intent.max_price, errors::price_mismatch());
+
+        // 4. Validation: Liquidity & Escrow
+        let fill_amount = intent.receive_amount;
+        assert!(offer::remaining_amount(offer) >= fill_amount, errors::insufficient_liquidity());
+
+        let payment_required = offer::calc_payment(fill_amount, execution_price);
+        assert!(balance::value(&intent.escrow) >= payment_required, errors::insufficient_escrowed());
+
+        // 5. Execution: Split payment and fill offer
+        let payment_balance = balance::split(&mut intent.escrow, payment_required);
+        let payment_coin = coin::from_balance(payment_balance, ctx);
+
+        // Fill (payment auto-settles to maker; returned coin is zero-value)
+        let (receipt, zero_payment) = if (fill_amount == offer::remaining_amount(offer)) {
+            offer::fill_full(offer, payment_coin, clock, ctx)
+        } else {
+            offer::fill_partial(offer, fill_amount, payment_coin, clock, ctx)
+        };
+
+        // Settle: OfferAsset → intent creator
+        let (offer_coin, _, _, _, _) = offer::unpack_receipt(receipt, ctx);
+        transfer::public_transfer(offer_coin, intent.creator);
+        coin::destroy_zero(zero_payment);
+
+        // 6. Cleanup
+        intent.status = STATUS_EXECUTED;
+
+        // 7. Refund remaining escrow
+        let refund_amount = balance::value(&intent.escrow);
+        if (refund_amount > 0) {
+            let refund_balance = balance::withdraw_all(&mut intent.escrow);
+            transfer::public_transfer(coin::from_balance(refund_balance, ctx), intent.creator);
+        };
+
+        let intent_id = object::uid_to_inner(&intent.id);
+        events::emit_intent_executed(
+            intent_id,
+            tx_context::sender(ctx),
+            object::id(offer),
+            fill_amount,
+            payment_required,
+            execution_price,
+            refund_amount,
+        );
+    }
+
+    // ===== V2: Gated Offer Execution (Fix #5) =====
+
+    /// Execute an intent against a gated-partial offer.
+    /// Requires both ExecutorCap (for intent execution) and PartialFillCap
+    /// (for gated partial fills on the offer).
+    /// Checks RevocationRegistry for both caps.
+    public fun execute_against_gated_offer<ReceiveAsset, PayAsset>(
+        intent: &mut ExecutionIntent<ReceiveAsset, PayAsset>,
+        offer: &mut LiquidityOffer<ReceiveAsset, PayAsset>,
+        exec_cap: &ExecutorCap,
+        partial_cap: &davy::capability::PartialFillCap,
+        registry: &RevocationRegistry,
+        execution_price: u64,
+        clock: &Clock,
+        ctx: &mut TxContext,
+    ) {
+        // Revocation checks (Fix #4)
+        assert!(
+            !capability::is_executor_cap_revoked(registry, object::id(exec_cap)),
+            errors::revoked_cap(),
+        );
+        assert!(
+            !capability::is_partial_fill_cap_revoked(registry, object::id(partial_cap)),
+            errors::revoked_cap(),
+        );
+
+        // 1. Validation: Intent status & expiry
+        assert!(intent.status == STATUS_PENDING, errors::intent_not_pending());
+        assert!(clock::timestamp_ms(clock) < intent.expiry_timestamp_ms, errors::intent_expired());
+
+        // 2. Validation: Offer availability
+        assert!(offer::is_fillable(offer, clock), errors::offer_not_fillable());
+
+        // 3. Validation: Price within BOTH offer and intent bounds
+        let (offer_min_price, offer_max_price) = offer::price_bounds(offer);
+        assert!(execution_price >= offer_min_price, errors::price_mismatch());
+        assert!(execution_price <= offer_max_price, errors::price_mismatch());
+        assert!(execution_price >= intent.min_price, errors::price_mismatch());
+        assert!(execution_price <= intent.max_price, errors::price_mismatch());
+
+        // 4. Validation: Liquidity & Escrow
+        let fill_amount = intent.receive_amount;
+        assert!(offer::remaining_amount(offer) >= fill_amount, errors::insufficient_liquidity());
+
+        let payment_required = offer::calc_payment(fill_amount, execution_price);
+        assert!(balance::value(&intent.escrow) >= payment_required, errors::insufficient_escrowed());
+
+        // 5. Execution: Split payment and fill offer
+        let payment_balance = balance::split(&mut intent.escrow, payment_required);
+        let payment_coin = coin::from_balance(payment_balance, ctx);
+
+        // Use gated fill for partial, regular fill_full for exact full
+        let (receipt, zero_payment) = if (fill_amount == offer::remaining_amount(offer)) {
+            offer::fill_full(offer, payment_coin, clock, ctx)
+        } else {
+            offer::fill_partial_gated(offer, fill_amount, payment_coin, partial_cap, clock, ctx)
+        };
+
+        // Settle: OfferAsset → intent creator
+        let (offer_coin, _, _, _, _) = offer::unpack_receipt(receipt, ctx);
+        transfer::public_transfer(offer_coin, intent.creator);
+        coin::destroy_zero(zero_payment);
+
+        // 6. Cleanup
+        intent.status = STATUS_EXECUTED;
+
+        // 7. Refund remaining escrow
+        let refund_amount = balance::value(&intent.escrow);
+        if (refund_amount > 0) {
+            let refund_balance = balance::withdraw_all(&mut intent.escrow);
+            transfer::public_transfer(coin::from_balance(refund_balance, ctx), intent.creator);
+        };
+
+        let intent_id = object::uid_to_inner(&intent.id);
+        events::emit_intent_executed(
+            intent_id,
+            tx_context::sender(ctx),
+            object::id(offer),
+            fill_amount,
+            payment_required,
+            execution_price,
             refund_amount,
         );
     }

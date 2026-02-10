@@ -1,22 +1,40 @@
 {
-    "name": "@davy/router-reference",
-    "version": "0.1.0",
-    "description": "Davy Protocol — off-chain router reference implementation. Proves that the Davy primitive composes into real execution outcomes.",
+    "name": "@davy-protocol/router",
+    "version": "0.8.0",
+    "description": "Production router for the Davy Protocol — split-route execution across Davy offers, DeepBook, and Cetus",
     "type": "module",
     "main": "dist/index.js",
+    "types": "dist/index.d.ts",
     "exports": {
-        ".": "./dist/index.js"
+        ".": {
+            "import": "./dist/index.js",
+            "types": "./dist/index.d.ts"
+        }
     },
     "scripts": {
         "build": "tsc",
-        "demo": "tsx src/demo.ts",
-        "test": "tsx src/demo.ts"
+        "watch": "tsc --watch",
+        "clean": "rm -rf dist",
+        "lint": "tsc --noEmit"
     },
     "dependencies": {
-        "@mysten/sui": "^1.0.0"
+        "@mysten/sui": "^1.16.0"
+    },
+    "optionalDependencies": {
+        "@mysten/deepbook-v3": "^0.17.0",
+        "@cetusprotocol/sui-clmm-sdk": "^5.0.0"
     },
     "devDependencies": {
-        "tsx": "^4.0.0",
-        "typescript": "^5.3.0"
-    }
+        "typescript": "^5.5.0",
+        "@types/node": "^22.0.0"
+    },
+    "engines": {
+        "node": ">=20.0.0"
+    },
+    "files": [
+        "dist",
+        "src",
+        "README.md"
+    ],
+    "license": "MIT"
 }

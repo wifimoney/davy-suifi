@@ -18,6 +18,12 @@
 ///   - `FILL_POLICY_FULL_ONLY (0)`: Only full fills accepted.
 ///   - `FILL_POLICY_PARTIAL_ALLOWED (1)`: Partial fills accepted,
 ///     subject to `min_fill_amount` and dust prevention.
+///
+/// ## Security (v2 upgrade)
+///   Low-level fill primitives (fill_full, fill_partial, fill_partial_gated)
+///   now auto-settle payment to the maker before returning. This prevents
+///   fund theft via direct PTB calls that bypass the _and_settle wrappers.
+///   The returned payment coin is zero-value for signature compatibility.
 module davy::offer {
     use sui::coin::{Self, Coin};
     use sui::balance::{Self, Balance};
@@ -66,7 +72,7 @@ module davy::offer {
         expiry_timestamp_ms: u64,
 
         // Fill policy
-        fill_policy: u8,        // 0 = FullOnly, 1 = PartialAllowed
+        fill_policy: u8,        // 0 = FullOnly, 1 = PartialAllowed, 2 = PartialGated
         min_fill_amount: u64,
 
         // Accounting
@@ -81,7 +87,7 @@ module davy::offer {
 
     /// Proof-of-fill returned by low-level fill primitives.
     /// Caller receives the OfferAsset balance and is responsible for routing.
-    /// Payment coin is returned separately.
+    /// Payment coin is returned separately (zero-value after auto-settle).
     public struct FillReceipt<phantom OfferAsset, phantom WantAsset> {
         offer_balance: Balance<OfferAsset>,
         fill_amount: u64,
@@ -152,8 +158,7 @@ module davy::offer {
 
         let offer_id = object::id(&offer);
 
-
-        events::emit_offer_created(
+        events::emit_offer_created_v2(
             offer_id, maker,
             type_name::get<OfferAsset>(),
             type_name::get<WantAsset>(),
@@ -262,9 +267,32 @@ module davy::offer {
     }
 
     /// Validate that effective price is within offer bounds.
+    /// DEPRECATED in v2 — use payment-range validation instead.
+    /// Kept for backward compatibility (no callers removed).
     fun validate_price_bounds(price: u64, min_price: u64, max_price: u64) {
         assert!(price >= min_price, errors::price_too_low());
         assert!(price <= max_price, errors::price_too_high());
+    }
+
+    // ===== Payment-Range Validation (Fix #2) =====
+
+    /// Validate payment amount falls within the acceptable range for the
+    /// given fill_amount and price bounds. Uses ceiling division consistently
+    /// to avoid the floor/ceil rounding mismatch that causes valid fills to abort.
+    fun validate_payment_in_range(
+        payment_amount: u64,
+        fill_amount: u64,
+        min_price: u64,
+        max_price: u64,
+    ): u64 {
+        // Minimum payment: what fill_amount costs at min_price (ceiling)
+        let min_required = calc_payment(fill_amount, min_price);
+        assert!(payment_amount >= min_required, errors::price_too_low());
+        // Maximum payment: what fill_amount costs at max_price (ceiling)
+        let max_allowed = calc_payment(fill_amount, max_price);
+        assert!(payment_amount <= max_allowed, errors::price_too_high());
+        // Derive effective price for event emission (informational, floor)
+        calculate_price(payment_amount, fill_amount)
     }
 
     // ===== Dust Prevention =====
@@ -300,7 +328,11 @@ module davy::offer {
     // ===== fill_full — low-level =====
 
     /// Low-level full fill. Takes entire remaining balance.
-    /// Returns FillReceipt (caller routes coins) and the payment coin (for maker).
+    /// Returns FillReceipt and a ZERO-VALUE payment coin.
+    ///
+    /// ⚠️ SECURITY (v2): Payment is auto-settled to maker inside this function.
+    /// The returned Coin<WantAsset> is zero-value. This prevents theft via
+    /// direct PTB calls that skip the _and_settle wrappers.
     public fun fill_full<OfferAsset, WantAsset>(
         offer: &mut LiquidityOffer<OfferAsset, WantAsset>,
         payment: Coin<WantAsset>,
@@ -313,8 +345,10 @@ module davy::offer {
         let fill_amount = remaining;
         let payment_amount = coin::value(&payment);
 
-        let price = calculate_price(payment_amount, fill_amount);
-        validate_price_bounds(price, offer.min_price, offer.max_price);
+        // Fix #2: Payment-range validation (no rounding mismatch)
+        let price = validate_payment_in_range(
+            payment_amount, fill_amount, offer.min_price, offer.max_price,
+        );
 
         // Extract full balance
         let offer_balance = balance::split(&mut offer.offer_balance, fill_amount);
@@ -339,13 +373,18 @@ module davy::offer {
             is_full: true,
         };
 
-        (receipt, payment)
+        // Fix #1: Auto-settle payment to maker. Return zero-value coin.
+        transfer::public_transfer(payment, offer.maker);
+        let zero_coin = coin::from_balance(balance::zero<WantAsset>(), ctx);
+        (receipt, zero_coin)
     }
 
     // ===== fill_partial — low-level =====
 
     /// Low-level partial fill. Takes `fill_amount` from offer balance.
-    /// Returns FillReceipt and the payment coin.
+    /// Returns FillReceipt and a ZERO-VALUE payment coin.
+    ///
+    /// ⚠️ SECURITY (v2): Payment is auto-settled to maker inside this function.
     public fun fill_partial<OfferAsset, WantAsset>(
         offer: &mut LiquidityOffer<OfferAsset, WantAsset>,
         fill_amount: u64,
@@ -365,8 +404,11 @@ module davy::offer {
         check_no_dust(offer, fill_amount);
 
         let payment_amount = coin::value(&payment);
-        let price = calculate_price(payment_amount, fill_amount);
-        validate_price_bounds(price, offer.min_price, offer.max_price);
+
+        // Fix #2: Payment-range validation (no rounding mismatch)
+        let price = validate_payment_in_range(
+            payment_amount, fill_amount, offer.min_price, offer.max_price,
+        );
 
         // Extract fill_amount from balance
         let offer_balance = balance::split(&mut offer.offer_balance, fill_amount);
@@ -398,34 +440,36 @@ module davy::offer {
             is_full,
         };
 
-        (receipt, payment)
+        // Fix #1: Auto-settle payment to maker. Return zero-value coin.
+        transfer::public_transfer(payment, offer.maker);
+        let zero_coin = coin::from_balance(balance::zero<WantAsset>(), ctx);
+        (receipt, zero_coin)
     }
 
     // ===== fill_full_and_settle — atomic =====
 
     /// Atomic full fill + settlement.
-    /// Sends OfferAsset to taker, WantAsset (payment) to maker.
+    /// Sends OfferAsset to taker. Payment already sent to maker in fill_full.
     public fun fill_full_and_settle<OfferAsset, WantAsset>(
         offer: &mut LiquidityOffer<OfferAsset, WantAsset>,
         payment: Coin<WantAsset>,
         clock: &Clock,
         ctx: &mut TxContext,
     ) {
-        let maker = offer.maker;
         let taker = tx_context::sender(ctx);
 
-        let (receipt, payment_coin) = fill_full(offer, payment, clock, ctx);
+        let (receipt, zero_payment) = fill_full(offer, payment, clock, ctx);
         let (offer_coin, _fill_amount, _payment_amount, _price, _is_full) = unpack_receipt(receipt, ctx);
 
-        // Settlement: OfferAsset → taker, WantAsset → maker
+        // OfferAsset → taker (payment already settled to maker in fill_full)
         transfer::public_transfer(offer_coin, taker);
-        transfer::public_transfer(payment_coin, maker);
+        coin::destroy_zero(zero_payment);
     }
 
     // ===== fill_partial_and_settle — atomic =====
 
     /// Atomic partial fill + settlement.
-    /// Sends OfferAsset to taker, WantAsset (payment) to maker.
+    /// Sends OfferAsset to taker. Payment already sent to maker in fill_partial.
     public fun fill_partial_and_settle<OfferAsset, WantAsset>(
         offer: &mut LiquidityOffer<OfferAsset, WantAsset>,
         fill_amount: u64,
@@ -433,15 +477,14 @@ module davy::offer {
         clock: &Clock,
         ctx: &mut TxContext,
     ) {
-        let maker = offer.maker;
         let taker = tx_context::sender(ctx);
 
-        let (receipt, payment_coin) = fill_partial(offer, fill_amount, payment, clock, ctx);
+        let (receipt, zero_payment) = fill_partial(offer, fill_amount, payment, clock, ctx);
         let (offer_coin, _fill_amount, _payment_amount, _price, _is_full) = unpack_receipt(receipt, ctx);
 
-        // Settlement: OfferAsset → taker, WantAsset → maker
+        // OfferAsset → taker (payment already settled to maker in fill_partial)
         transfer::public_transfer(offer_coin, taker);
-        transfer::public_transfer(payment_coin, maker);
+        coin::destroy_zero(zero_payment);
     }
 
     // ===== fill_partial_gated — cap-gated partial fill =====
@@ -450,6 +493,8 @@ module davy::offer {
     /// Same semantics as fill_partial but requires:
     ///   - offer.fill_policy == FILL_POLICY_PARTIAL_GATED
     ///   - caller holds a valid PartialFillCap reference
+    ///
+    /// ⚠️ SECURITY (v2): Payment is auto-settled to maker inside this function.
     public fun fill_partial_gated<OfferAsset, WantAsset>(
         offer: &mut LiquidityOffer<OfferAsset, WantAsset>,
         fill_amount: u64,
@@ -470,8 +515,11 @@ module davy::offer {
         check_no_dust(offer, fill_amount);
 
         let payment_amount = coin::value(&payment);
-        let price = calculate_price(payment_amount, fill_amount);
-        validate_price_bounds(price, offer.min_price, offer.max_price);
+
+        // Fix #2: Payment-range validation (no rounding mismatch)
+        let price = validate_payment_in_range(
+            payment_amount, fill_amount, offer.min_price, offer.max_price,
+        );
 
         // Extract fill_amount from balance
         let offer_balance = balance::split(&mut offer.offer_balance, fill_amount);
@@ -503,7 +551,10 @@ module davy::offer {
             is_full,
         };
 
-        (receipt, payment)
+        // Fix #1: Auto-settle payment to maker. Return zero-value coin.
+        transfer::public_transfer(payment, offer.maker);
+        let zero_coin = coin::from_balance(balance::zero<WantAsset>(), ctx);
+        (receipt, zero_coin)
     }
 
     // ===== fill_partial_gated_and_settle — atomic =====
@@ -517,15 +568,14 @@ module davy::offer {
         clock: &Clock,
         ctx: &mut TxContext,
     ) {
-        let maker = offer.maker;
         let taker = tx_context::sender(ctx);
 
-        let (receipt, payment_coin) = fill_partial_gated(offer, fill_amount, payment, partial_cap, clock, ctx);
+        let (receipt, zero_payment) = fill_partial_gated(offer, fill_amount, payment, partial_cap, clock, ctx);
         let (offer_coin, _fill_amount, _payment_amount, _price, _is_full) = unpack_receipt(receipt, ctx);
 
-        // Settlement: OfferAsset → taker, WantAsset → maker
+        // OfferAsset → taker (payment already settled to maker in fill_partial_gated)
         transfer::public_transfer(offer_coin, taker);
-        transfer::public_transfer(payment_coin, maker);
+        coin::destroy_zero(zero_payment);
     }
 
     // ===== View Functions =====
@@ -620,32 +670,8 @@ module davy::offer {
     // =========================================================================
     // QUOTE HELPERS — Pure view functions for router integration (Phase 7)
     // =========================================================================
-    //
-    // These functions replicate the EXACT math used in fill_full/fill_partial
-    // so that off-chain routers can price-check offers without simulating fills.
-    //
-    // Rounding rules:
-    //   quote_pay_amount:  ceiling division — never under-charges the taker
-    //   quote_fill_amount: floor division   — never over-promises to the taker
-    //
-    // Both use u128 intermediates, identical to calc_payment/calculate_price.
-    // The invariant: for any valid fill_amount,
-    //   quote_pay_amount(offer, fill_amount) == actual payment in fill_*_and_settle
-    //
-    // =========================================================================
 
     /// Quote: "If I want `fill_amount` of OfferAsset, how much WantAsset do I pay?"
-    ///
-    /// Uses the offer's max_price for quoting (worst-case for taker).
-    /// Returns the exact payment amount that fill_*_and_settle would require.
-    ///
-    /// Aborts if:
-    ///   - offer is not fillable (wrong status or expired — but no Clock here,
-    ///     caller must check expiry separately)
-    ///   - fill_amount is zero
-    ///   - fill_amount exceeds remaining balance
-    ///   - fill would leave dust (remainder < min_fill_amount)
-    ///   - offer is full-only and fill_amount != remaining
     ///
     /// Rounding: ceiling (taker never under-pays)
     public fun quote_pay_amount<OfferAsset, WantAsset>(
@@ -684,7 +710,6 @@ module davy::offer {
         assert!(price <= offer.max_price, errors::price_too_high());
 
         // Calculate payment — ceiling division, identical to calc_payment
-        // payment = ceil(fill_amount * price / 1e9)
         let fill_u128 = (fill_amount as u128);
         let price_u128 = (price as u128);
         let scaling = PRICE_SCALING_FACTOR;
@@ -695,13 +720,6 @@ module davy::offer {
     }
 
     /// Quote: "If I have `pay_budget` of WantAsset, how much OfferAsset can I receive?"
-    ///
-    /// Inverse of quote_pay_amount. Uses floor division so we never over-promise.
-    /// The returned fill_amount is the MAXIMUM receivable for the given budget.
-    ///
-    /// Does NOT validate fill policy or dust — caller must check those constraints
-    /// separately if building a router. This is intentional: the router needs the
-    /// raw max-fill to then clamp against min_fill and dust rules.
     ///
     /// Rounding: floor (taker never receives more than they paid for)
     public fun quote_fill_amount<OfferAsset, WantAsset>(
@@ -718,14 +736,13 @@ module davy::offer {
         );
 
         assert!(pay_budget > 0, errors::zero_amount());
-        assert!(price > 0, errors::zero_price()); 
+        assert!(price > 0, errors::zero_price());
 
         // Price bounds check
         assert!(price >= offer.min_price, errors::price_too_low());
         assert!(price <= offer.max_price, errors::price_too_high());
 
         // Calculate max fill — floor division, never over-promise
-        // fill = floor(pay_budget * 1e9 / price)
         let pay_u128 = (pay_budget as u128);
         let price_u128 = (price as u128);
         let scaling = PRICE_SCALING_FACTOR;

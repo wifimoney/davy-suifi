@@ -1,0 +1,72 @@
+// =============================================================================
+// FIX #7 — LOW: Empty Package Module + Init Verification
+// =============================================================================
+//
+// PROBLEM:
+//   davy_suifi.move is a commented-out placeholder:
+//     module davy_suifi::davy_suifi;
+//   
+//   But capability.move declares:
+//     module davy::capability { fun init(ctx) { ... } }
+//
+//   For init() to fire at publish, the module name must match the package name.
+//   If Move.toml says `name = "davy_suifi"`, then only `davy_suifi::*` modules
+//   get their init() called. The `davy::capability` init() would NOT fire,
+//   meaning no AdminCap is ever created.
+//
+// VERIFICATION STEPS:
+//   1. Check Move.toml — the [package] name field
+//   2. Ensure all modules use the same namespace as the package name
+//   3. OR move the init() to a module matching the package namespace
+//
+// FILE: Move.toml + sources/davy_suifi.move
+// =============================================================================
+
+// ---------- Step 1: Check Move.toml ----------
+//
+// Your Move.toml should look like ONE of these:
+//
+// OPTION A — Package named "davy" (all modules use davy::*):
+//   [package]
+//   name = "davy"
+//   
+//   This means davy::capability::init() WILL fire. ✅
+//   davy_suifi.move is dead code and should be removed.
+//
+// OPTION B — Package named "davy_suifi" (modules use davy_suifi::*):
+//   [package]
+//   name = "davy_suifi"
+//   
+//   This means davy::capability::init() will NOT fire. ❌
+//   You need to either:
+//     a) Rename all modules from `davy::*` to `davy_suifi::*`
+//     b) OR change Move.toml name to "davy"
+//     c) OR move init() into davy_suifi::davy_suifi module
+
+
+// ---------- Step 2: If package is "davy", remove the empty file ----------
+//
+// Delete sources/davy_suifi.move entirely, OR replace with:
+
+/// Davy Protocol — Package marker module
+/// All protocol logic lives in davy::offer, davy::intent, davy::capability, etc.
+module davy::davy_suifi {
+    // Intentionally empty — init() lives in davy::capability
+}
+
+
+// ---------- Step 3: Verify after deploy ----------
+//
+// After publishing, verify AdminCap was created:
+//   sui client objects --type <PACKAGE_ID>::capability::AdminCap
+//
+// If empty, init() did not fire — wrong package name.
+
+
+// ---------- CRITICAL: Check your actual published package ----------
+//
+// Run this to see what your mainnet deploy looks like:
+//   sui client object <PACKAGE_ID> --json
+//
+// Look at the module names. If they show "davy::capability" but package
+// is named "davy_suifi", that's the bug.

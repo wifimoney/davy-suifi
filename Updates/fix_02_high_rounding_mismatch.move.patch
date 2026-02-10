@@ -1,0 +1,91 @@
+// =============================================================================
+// FIX #2 — HIGH: Rounding Mismatch Causes Valid Fills to Abort
+// =============================================================================
+//
+// PROBLEM:
+//   fill_full accepts raw payment, back-derives price via calculate_price()
+//   (floor division), then validates against bounds. But calc_payment() uses
+//   ceiling division. For small amounts with tight bounds, the back-derived
+//   price can exceed max_price even though the fill is economically valid.
+//
+//   Example: fill=1, price=1_500_000_001 → payment=2 (ceil)
+//            calculate_price(2, 1) = 2_000_000_000 > max_price → ABORT
+//
+// FIX:
+//   In fill_full, validate the MINIMUM price (floor) against min_price,
+//   and validate that payment >= calc_payment(fill, min_price). This ensures
+//   the maker gets at least their minimum rate without the rounding mismatch.
+//
+//   In fill_partial (and gated), same approach: validate that payment is
+//   sufficient at the declared price, not back-derive a new price.
+//
+// UPGRADE COMPATIBLE: Yes — body-only change, no signature changes.
+//
+// FILE: sources/offer.move
+// =============================================================================
+
+// ---------- fill_full: replace price validation logic ----------
+//
+// FIND (in fill_full, after "let fill_amount = remaining;"):
+
+        let fill_amount = remaining;
+        let payment_amount = coin::value(&payment);
+
+        let price = calculate_price(payment_amount, fill_amount);
+        validate_price_bounds(price, offer.min_price, offer.max_price);
+
+// REPLACE WITH:
+
+        let fill_amount = remaining;
+        let payment_amount = coin::value(&payment);
+
+        // Validate payment covers at least min_price (ceiling division)
+        let min_required = calc_payment(fill_amount, offer.min_price);
+        assert!(payment_amount >= min_required, errors::price_too_low());
+        // Validate payment doesn't exceed max_price (ceiling division)
+        let max_allowed = calc_payment(fill_amount, offer.max_price);
+        assert!(payment_amount <= max_allowed, errors::price_too_high());
+        // Derive effective price for event emission (floor — informational only)
+        let price = calculate_price(payment_amount, fill_amount);
+
+
+// ---------- fill_partial: replace price validation logic ----------
+//
+// FIND (in fill_partial, after "check_no_dust"):
+
+        let payment_amount = coin::value(&payment);
+        let price = calculate_price(payment_amount, fill_amount);
+        validate_price_bounds(price, offer.min_price, offer.max_price);
+
+// REPLACE WITH:
+
+        let payment_amount = coin::value(&payment);
+        // Validate payment covers at least min_price
+        let min_required = calc_payment(fill_amount, offer.min_price);
+        assert!(payment_amount >= min_required, errors::price_too_low());
+        // Validate payment doesn't exceed max_price
+        let max_allowed = calc_payment(fill_amount, offer.max_price);
+        assert!(payment_amount <= max_allowed, errors::price_too_high());
+        // Derive effective price for event emission (informational)
+        let price = calculate_price(payment_amount, fill_amount);
+
+
+// ---------- fill_partial_gated: same replacement ----------
+//
+// FIND (in fill_partial_gated, after "check_no_dust"):
+
+        let payment_amount = coin::value(&payment);
+        let price = calculate_price(payment_amount, fill_amount);
+        validate_price_bounds(price, offer.min_price, offer.max_price);
+
+// REPLACE WITH:
+
+        let payment_amount = coin::value(&payment);
+        // Validate payment covers at least min_price
+        let min_required = calc_payment(fill_amount, offer.min_price);
+        assert!(payment_amount >= min_required, errors::price_too_low());
+        // Validate payment doesn't exceed max_price
+        let max_allowed = calc_payment(fill_amount, offer.max_price);
+        assert!(payment_amount <= max_allowed, errors::price_too_high());
+        // Derive effective price for event emission (informational)
+        let price = calculate_price(payment_amount, fill_amount);

@@ -1,0 +1,92 @@
+// =============================================================================
+// FIX #5 — MEDIUM: Intent Can't Execute Against Gated Partial Offers
+// =============================================================================
+//
+// PROBLEM:
+//   execute_against_offer calls fill_partial() which asserts
+//   fill_policy == FILL_POLICY_PARTIAL_ALLOWED. Offers with
+//   FILL_POLICY_PARTIAL_GATED (2) abort unless intent takes exact full amount.
+//   The executor holds ExecutorCap but has no way to provide PartialFillCap.
+//
+// FIX:
+//   Add execute_against_gated_offer() that takes both ExecutorCap and
+//   PartialFillCap, and calls fill_partial_gated() for partial fills.
+//
+// UPGRADE COMPATIBLE: Yes — additive function.
+//
+// FILE: sources/intent.move
+// =============================================================================
+
+// ---------- Add after execute_against_offer_v2 ----------
+
+    /// Execute an intent against a gated-partial offer.
+    /// Requires both ExecutorCap (for intent execution) and PartialFillCap
+    /// (for gated partial fills on the offer).
+    public fun execute_against_gated_offer<ReceiveAsset, PayAsset>(
+        intent: &mut ExecutionIntent<ReceiveAsset, PayAsset>,
+        offer: &mut LiquidityOffer<ReceiveAsset, PayAsset>,
+        _exec_cap: &ExecutorCap,
+        partial_cap: &davy::capability::PartialFillCap,
+        execution_price: u64,
+        clock: &Clock,
+        ctx: &mut TxContext,
+    ) {
+        // 1. Validation: Intent status & expiry
+        assert!(intent.status == STATUS_PENDING, errors::intent_not_pending());
+        assert!(clock::timestamp_ms(clock) < intent.expiry_timestamp_ms, errors::intent_expired());
+
+        // 2. Validation: Offer availability
+        assert!(offer::is_fillable(offer, clock), errors::offer_not_fillable());
+
+        // 3. Validation: Price within BOTH offer and intent bounds
+        let (offer_min_price, offer_max_price) = offer::price_bounds(offer);
+        assert!(execution_price >= offer_min_price, errors::price_mismatch());
+        assert!(execution_price <= offer_max_price, errors::price_mismatch());
+        assert!(execution_price >= intent.min_price, errors::price_mismatch());
+        assert!(execution_price <= intent.max_price, errors::price_mismatch());
+
+        // 4. Validation: Liquidity & Escrow
+        let fill_amount = intent.receive_amount;
+        assert!(offer::remaining_amount(offer) >= fill_amount, errors::insufficient_liquidity());
+
+        let payment_required = offer::calc_payment(fill_amount, execution_price);
+        assert!(balance::value(&intent.escrow) >= payment_required, errors::insufficient_escrowed());
+
+        // 5. Execution: Split payment and fill offer
+        let payment_balance = balance::split(&mut intent.escrow, payment_required);
+        let payment_coin = coin::from_balance(payment_balance, ctx);
+
+        // Use gated fill for partial, regular fill_full for exact full
+        // After Fix #1, payment auto-settles to maker; returned coin is zero.
+        let (receipt, zero_payment) = if (fill_amount == offer::remaining_amount(offer)) {
+            offer::fill_full(offer, payment_coin, clock, ctx)
+        } else {
+            offer::fill_partial_gated(offer, fill_amount, payment_coin, partial_cap, clock, ctx)
+        };
+
+        // Settle: OfferAsset → intent creator
+        let (offer_coin, _, _, _, _) = offer::unpack_receipt(receipt, ctx);
+        transfer::public_transfer(offer_coin, intent.creator);
+        coin::destroy_zero(zero_payment);
+
+        // 6. Cleanup
+        intent.status = STATUS_EXECUTED;
+
+        // 7. Refund remaining escrow
+        let refund_amount = balance::value(&intent.escrow);
+        if (refund_amount > 0) {
+            let refund_balance = balance::withdraw_all(&mut intent.escrow);
+            transfer::public_transfer(coin::from_balance(refund_balance, ctx), intent.creator);
+        };
+
+        let intent_id = object::uid_to_inner(&intent.id);
+        events::emit_intent_executed(
+            intent_id,
+            tx_context::sender(ctx),
+            object::id(offer),
+            fill_amount,
+            payment_required,
+            execution_price,
+            refund_amount,
+        );
+    }

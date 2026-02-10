@@ -18,6 +18,17 @@ module davy::events {
     public struct OfferCreated has copy, drop {
         offer_id: ID,
         maker: address,
+        initial_offer_amount: u64,
+        min_price: u64,
+        max_price: u64,
+        expiry_timestamp_ms: u64,
+        fill_policy: u8,
+        min_fill_amount: u64,
+    }
+
+    public struct OfferCreatedV2 has copy, drop {
+        offer_id: ID,
+        maker: address,
         offer_asset: TypeName,
         want_asset: TypeName,
         initial_offer_amount: u64,
@@ -54,6 +65,17 @@ module davy::events {
     // ===== Intent Events =====
 
     public struct IntentSubmitted has copy, drop {
+        intent_id: ID,
+        creator: address,
+        receive_amount: u64,
+        max_pay_amount: u64,
+        escrowed_amount: u64,
+        min_price: u64,
+        max_price: u64,
+        expiry_timestamp_ms: u64,
+    }
+
+    public struct IntentSubmittedV2 has copy, drop {
         intent_id: ID,
         creator: address,
         receive_asset: TypeName,
@@ -142,6 +164,23 @@ module davy::events {
     public fun emit_offer_created(
         offer_id: ID,
         maker: address,
+        initial_offer_amount: u64,
+        min_price: u64,
+        max_price: u64,
+        expiry_timestamp_ms: u64,
+        fill_policy: u8,
+        min_fill_amount: u64,
+    ) {
+        event::emit(OfferCreated {
+            offer_id, maker,
+            initial_offer_amount, min_price, max_price,
+            expiry_timestamp_ms, fill_policy, min_fill_amount,
+        });
+    }
+
+    public fun emit_offer_created_v2(
+        offer_id: ID,
+        maker: address,
         offer_asset: TypeName,
         want_asset: TypeName,
         initial_offer_amount: u64,
@@ -151,7 +190,7 @@ module davy::events {
         fill_policy: u8,
         min_fill_amount: u64,
     ) {
-        event::emit(OfferCreated {
+        event::emit(OfferCreatedV2 {
             offer_id, maker, offer_asset, want_asset,
             initial_offer_amount, min_price, max_price,
             expiry_timestamp_ms, fill_policy, min_fill_amount,
@@ -197,6 +236,23 @@ module davy::events {
     public fun emit_intent_submitted(
         intent_id: ID,
         creator: address,
+        receive_amount: u64,
+        max_pay_amount: u64,
+        escrowed_amount: u64,
+        min_price: u64,
+        max_price: u64,
+        expiry_timestamp_ms: u64,
+    ) {
+        event::emit(IntentSubmitted {
+            intent_id, creator,
+            receive_amount, max_pay_amount, escrowed_amount,
+            min_price, max_price, expiry_timestamp_ms,
+        });
+    }
+
+    public fun emit_intent_submitted_v2(
+        intent_id: ID,
+        creator: address,
         receive_asset: TypeName,
         pay_asset: TypeName,
         receive_amount: u64,
@@ -206,7 +262,7 @@ module davy::events {
         max_price: u64,
         expiry_timestamp_ms: u64,
     ) {
-        event::emit(IntentSubmitted {
+        event::emit(IntentSubmittedV2 {
             intent_id, creator, receive_asset, pay_asset,
             receive_amount, max_pay_amount, escrowed_amount,
             min_price, max_price, expiry_timestamp_ms,

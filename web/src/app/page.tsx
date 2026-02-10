@@ -6,16 +6,11 @@ import { useRouter } from 'next/navigation';
 import { useCurrentAccount, ConnectButton } from '@mysten/dapp-kit';
 import { useEffect, useState } from 'react';
 
-const GIFS = [
-    '/animations/pirate_v4_1.gif',
-    '/animations/pirate_v4_2.gif',
-    '/animations/pirate_v4_3.gif',
-];
+const INTRO_IMAGE = '/animations/intro.png';
 
 export default function LandingPage() {
     const account = useCurrentAccount();
     const router = useRouter();
-    const [currentGifIndex, setCurrentGifIndex] = useState(0);
 
     // Automatically redirect to dashboard when wallet is connected
     useEffect(() => {
@@ -24,34 +19,20 @@ export default function LandingPage() {
         }
     }, [account, router]);
 
-    // Background Gif Loop Timer
-    useEffect(() => {
-        const interval = setInterval(() => {
-            setCurrentGifIndex((prev) => (prev + 1) % GIFS.length);
-        }, 6000); // 6 seconds per gif
-        return () => clearInterval(interval);
-    }, []);
-
     return (
         <div className="relative min-h-screen w-full bg-[#030303] flex items-center justify-center overflow-hidden">
-            {/* Sequential Background Animations (16:9) */}
+            {/* Static Background Image (16:9) */}
             <div className="absolute inset-0 z-0 flex items-center justify-center p-4 md:p-12">
                 <div className="relative w-full max-w-6xl aspect-video overflow-hidden rounded-[2rem] border border-white/10 shadow-[0_0_100px_rgba(34,211,238,0.05)]">
-                    {GIFS.map((src, index) => (
-                        <div
-                            key={src}
-                            className={`absolute inset-0 transition-opacity duration-1000 ease-in-out ${index === currentGifIndex ? 'opacity-80' : 'opacity-0'
-                                }`}
-                        >
-                            <Image
-                                src={src}
-                                alt={`Background Pirate ${index + 1}`}
-                                fill
-                                className="object-cover"
-                                unoptimized
-                            />
-                        </div>
-                    ))}
+                    <div className="absolute inset-0">
+                        <Image
+                            src={INTRO_IMAGE}
+                            alt="Background Pirate"
+                            fill
+                            className="object-cover"
+                            unoptimized
+                        />
+                    </div>
                     {/* Deeper vignette around edges (75%) */}
                     <div className="absolute inset-0 pointer-events-none shadow-[inset_0_0_160px_rgba(0,0,0,0.75)]" />
                 </div>
@@ -98,15 +79,7 @@ export default function LandingPage() {
                 </div>
             </div>
 
-            {/* Pagination / Dots */}
-            <div className="absolute bottom-16 left-1/2 -translate-x-1/2 flex gap-4 z-10">
-                {GIFS.map((_, i) => (
-                    <div
-                        key={i}
-                        className={`h-1 transition-all duration-700 ${i === currentGifIndex ? 'w-12 bg-cyan-500' : 'w-2 bg-white/20'}`}
-                    />
-                ))}
-            </div>
+
 
             {/* Static Overlays */}
             <div className="absolute bottom-8 left-10 z-20 text-[9px] font-pixel text-gray-500 uppercase tracking-widest opacity-40">

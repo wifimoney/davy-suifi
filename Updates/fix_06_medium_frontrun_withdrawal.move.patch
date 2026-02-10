@@ -1,0 +1,56 @@
+// =============================================================================
+// FIX #6 — MEDIUM: Maker Can Front-Run Withdrawal During Fill
+// =============================================================================
+//
+// PROBLEM:
+//   Nothing prevents a maker from racing a withdraw() against an incoming
+//   fill. On Sui this is harder than EVM (no mempool, Narwhal/Bullshark
+//   ordering), but not impossible with validator-adjacent MEV.
+//
+// ASSESSMENT:
+//   This is inherent to cancellable offers and accepted in similar protocols
+//   (DeepBook cancel-in-epoch, Serum cancel). Full mitigation would require
+//   removing withdraw(), which breaks the maker UX.
+//
+// OPTIONAL MITIGATION — Creation Cooldown:
+//   Add a minimum time after creation before withdrawal is allowed.
+//   This gives takers a guaranteed window to fill without maker interference.
+//
+// UPGRADE COMPATIBLE: Yes — body-only change to withdraw().
+//
+// FILE: sources/offer.move
+// =============================================================================
+
+// ---------- Option A: Document as accepted risk (no code change) ----------
+//
+// Add to module docstring or README:
+//
+//   ## Known Limitation: Maker Withdrawal Race
+//   A maker can submit withdraw() concurrently with an incoming fill.
+//   On Sui, deterministic ordering makes this harder to exploit than on
+//   EVM, but it is not impossible. Takers and executors should:
+//   1. Use simulation (sui_devInspectTransactionBlock) before submitting
+//   2. Handle abort code 115 (invalid_status_for_withdraw) gracefully
+//   3. Prefer offers with longer expiry times for better UX
+
+
+// ---------- Option B: Add cooldown (upgrade-compatible body change) ----------
+//
+// Requires adding a field to LiquidityOffer — NOT possible in compatible upgrade.
+// Only viable in a REDEPLOY. Included here for reference:
+
+    // Add to LiquidityOffer struct:
+    //   created_at_ms: u64,
+
+    // In create(), set:
+    //   created_at_ms: sui::clock::timestamp_ms(clock),
+
+    // In withdraw(), add before status check:
+    //   const MIN_LIVE_DURATION_MS: u64 = 60_000; // 60 seconds
+    //   let now = sui::clock::timestamp_ms(clock);  // need clock param
+    //   assert!(now >= offer.created_at_ms + MIN_LIVE_DURATION_MS, errors::withdraw_too_early());
+
+// NOTE: Adding clock parameter to withdraw() is a SIGNATURE CHANGE and
+// therefore a BREAKING CHANGE for upgrades. This fix is redeploy-only.
+//
+// For the upgrade path, Option A (document as accepted risk) is recommended.

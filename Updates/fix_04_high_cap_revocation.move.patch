@@ -1,0 +1,173 @@
+// =============================================================================
+// FIX #4 — HIGH: No Admin Override for Cap Revocation
+// =============================================================================
+//
+// PROBLEM:
+//   destroy_executor_cap() takes ExecutorCap by value — only the holder can
+//   call it. If a bot is compromised, admin has no way to revoke its cap.
+//
+// FIX:
+//   Add an on-chain revocation registry (a shared object holding revoked cap IDs).
+//   The admin can add cap IDs to the registry. Intent execution checks the
+//   registry before proceeding.
+//
+//   This is additive — no existing signatures change.
+//
+// UPGRADE COMPATIBLE: Yes — new struct + new functions only.
+//
+// FILE: sources/capability.move (additions)
+// FILE: sources/intent.move (guard addition)
+// =============================================================================
+
+// ========== capability.move — Add after existing structs ==========
+
+    /// On-chain registry of revoked capability IDs.
+    /// Shared object — admin writes, intent execution reads.
+    public struct RevocationRegistry has key, store {
+        id: UID,
+        /// Set of revoked ExecutorCap IDs
+        revoked_executor_caps: vector<ID>,
+        /// Set of revoked PartialFillCap IDs
+        revoked_partial_fill_caps: vector<ID>,
+    }
+
+// ========== capability.move — Add to init() body, BEFORE the transfer ==========
+// NOTE: This is a struct layout addition. For upgrades, you CANNOT modify init()
+// to create this automatically. Instead, add a one-time setup function:
+
+    /// Create the revocation registry. Call once after upgrade.
+    /// Admin-gated to prevent spam creation.
+    public fun create_revocation_registry(
+        _admin: &AdminCap,
+        ctx: &mut TxContext,
+    ) {
+        let registry = RevocationRegistry {
+            id: object::new(ctx),
+            revoked_executor_caps: vector::empty(),
+            revoked_partial_fill_caps: vector::empty(),
+        };
+        transfer::public_share_object(registry);
+    }
+
+    /// Admin revokes an ExecutorCap by ID. The cap still exists as an object
+    /// but intent execution will reject it.
+    public fun revoke_executor_cap_by_id(
+        _admin: &AdminCap,
+        registry: &mut RevocationRegistry,
+        cap_id: ID,
+    ) {
+        // Prevent duplicate entries
+        let i = 0;
+        let len = vector::length(&registry.revoked_executor_caps);
+        while (i < len) {
+            assert!(*vector::borrow(&registry.revoked_executor_caps, i) != cap_id, 301);
+            i = i + 1;
+        };
+        vector::push_back(&mut registry.revoked_executor_caps, cap_id);
+    }
+
+    /// Admin revokes a PartialFillCap by ID.
+    public fun revoke_partial_fill_cap_by_id(
+        _admin: &AdminCap,
+        registry: &mut RevocationRegistry,
+        cap_id: ID,
+    ) {
+        let i = 0;
+        let len = vector::length(&registry.revoked_partial_fill_caps);
+        while (i < len) {
+            assert!(*vector::borrow(&registry.revoked_partial_fill_caps, i) != cap_id, 302);
+            i = i + 1;
+        };
+        vector::push_back(&mut registry.revoked_partial_fill_caps, cap_id);
+    }
+
+    /// Admin un-revokes an ExecutorCap (in case of mistake).
+    public fun unrevoke_executor_cap(
+        _admin: &AdminCap,
+        registry: &mut RevocationRegistry,
+        cap_id: ID,
+    ) {
+        let len = vector::length(&registry.revoked_executor_caps);
+        let i = 0;
+        while (i < len) {
+            if (*vector::borrow(&registry.revoked_executor_caps, i) == cap_id) {
+                vector::swap_remove(&mut registry.revoked_executor_caps, i);
+                return
+            };
+            i = i + 1;
+        };
+        abort 303 // not found
+    }
+
+    /// Check if an ExecutorCap ID is revoked.
+    public fun is_executor_cap_revoked(
+        registry: &RevocationRegistry,
+        cap_id: ID,
+    ): bool {
+        let i = 0;
+        let len = vector::length(&registry.revoked_executor_caps);
+        while (i < len) {
+            if (*vector::borrow(&registry.revoked_executor_caps, i) == cap_id) {
+                return true
+            };
+            i = i + 1;
+        };
+        false
+    }
+
+    /// Check if a PartialFillCap ID is revoked.
+    public fun is_partial_fill_cap_revoked(
+        registry: &RevocationRegistry,
+        cap_id: ID,
+    ): bool {
+        let i = 0;
+        let len = vector::length(&registry.revoked_partial_fill_caps);
+        while (i < len) {
+            if (*vector::borrow(&registry.revoked_partial_fill_caps, i) == cap_id) {
+                return true
+            };
+            i = i + 1;
+        };
+        false
+    }
+
+
+// ========== intent.move — Update execute_against_offer_v2 ==========
+//
+// Add RevocationRegistry as a parameter to v2 (since v2 is new, this is fine):
+//
+//   public fun execute_against_offer_v2<ReceiveAsset, PayAsset>(
+//       intent: &mut ExecutionIntent<ReceiveAsset, PayAsset>,
+//       offer: &mut LiquidityOffer<ReceiveAsset, PayAsset>,
+//       _exec_cap: &ExecutorCap,
+//       registry: &capability::RevocationRegistry,  // <-- ADD THIS
+//       execution_price: u64,
+//       clock: &Clock,
+//       ctx: &mut TxContext,
+//   ) {
+//       // Add at the top of the function body:
+//       assert!(
+//           !capability::is_executor_cap_revoked(registry, object::id(_exec_cap)),
+//           303 // revoked cap
+//       );
+//       // ... rest of function
+//   }
+//
+// NOTE: The original execute_against_offer() cannot be modified to require
+// the registry (signature change = breaking). This is another reason to
+// deprecate v1 and push users to v2.
+
+
+// ========== errors.move — Add new error constants ==========
+
+    const ECAP_ALREADY_REVOKED: u64 = 301;
+    public fun cap_already_revoked(): u64 { ECAP_ALREADY_REVOKED }
+
+    const EPARTIAL_CAP_ALREADY_REVOKED: u64 = 302;
+    public fun partial_cap_already_revoked(): u64 { EPARTIAL_CAP_ALREADY_REVOKED }
+
+    const EREVOKED_CAP: u64 = 303;
+    public fun revoked_cap(): u64 { EREVOKED_CAP }
+
+    const EREVOCATION_NOT_FOUND: u64 = 304;
+    public fun revocation_not_found(): u64 { EREVOCATION_NOT_FOUND }

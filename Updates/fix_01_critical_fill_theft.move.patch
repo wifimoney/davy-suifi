@@ -1,0 +1,187 @@
+// =============================================================================
+// FIX #1 — CRITICAL: Prevent Fund Theft via Low-Level Fill Primitives
+// =============================================================================
+//
+// PROBLEM:
+//   fill_full, fill_partial, fill_partial_gated, and unpack_receipt are all
+//   `public fun`. An attacker calls fill_full → unpack_receipt in a single PTB
+//   and walks away with both the OfferAsset AND their payment.
+//
+// UPGRADE-COMPATIBLE FIX:
+//   We CANNOT change `public fun` → `public(package) fun` in a compatible upgrade.
+//   Instead, we modify the BODIES of fill_full/fill_partial/fill_partial_gated to
+//   auto-settle payment to the maker before returning. The returned payment coin
+//   is zero-value. This means:
+//     - _and_settle wrappers still work (they transfer a zero coin to maker — harmless)
+//     - intent.move still works (it transfers zero coin to maker — harmless)
+//     - Direct external callers get OfferAsset but payment already went to maker
+//
+// REDEPLOY-CLEAN FIX (if upgrade fails):
+//   Change all four functions to `public(package) fun`. Much simpler.
+//
+// FILE: sources/offer.move
+// =============================================================================
+
+// ---------- fill_full: replace the return block at the end of the function ----------
+// 
+// FIND this block (near end of fill_full):
+
+        let receipt = FillReceipt<OfferAsset, WantAsset> {
+            offer_balance,
+            fill_amount,
+            payment_amount,
+            price,
+            is_full: true,
+        };
+
+        (receipt, payment)
+
+// REPLACE WITH:
+
+        let receipt = FillReceipt<OfferAsset, WantAsset> {
+            offer_balance,
+            fill_amount,
+            payment_amount,
+            price,
+            is_full: true,
+        };
+
+        // AUTO-SETTLE: Send payment to maker immediately to prevent theft.
+        // Callers receive a zero-value coin (signature-compatible).
+        transfer::public_transfer(payment, offer.maker);
+        let zero_coin = coin::from_balance(balance::zero<WantAsset>(), ctx);
+        (receipt, zero_coin)
+
+
+// ---------- fill_partial: replace the return block at the end ----------
+//
+// FIND this block (near end of fill_partial):
+
+        let receipt = FillReceipt<OfferAsset, WantAsset> {
+            offer_balance,
+            fill_amount,
+            payment_amount,
+            price,
+            is_full,
+        };
+
+        (receipt, payment)
+
+// REPLACE WITH:
+
+        let receipt = FillReceipt<OfferAsset, WantAsset> {
+            offer_balance,
+            fill_amount,
+            payment_amount,
+            price,
+            is_full,
+        };
+
+        // AUTO-SETTLE: Send payment to maker immediately to prevent theft.
+        transfer::public_transfer(payment, offer.maker);
+        let zero_coin = coin::from_balance(balance::zero<WantAsset>(), ctx);
+        (receipt, zero_coin)
+
+
+// ---------- fill_partial_gated: replace the return block at the end ----------
+//
+// FIND this block (near end of fill_partial_gated):
+
+        let receipt = FillReceipt<OfferAsset, WantAsset> {
+            offer_balance,
+            fill_amount,
+            payment_amount,
+            price,
+            is_full,
+        };
+
+        (receipt, payment)
+
+// REPLACE WITH:
+
+        let receipt = FillReceipt<OfferAsset, WantAsset> {
+            offer_balance,
+            fill_amount,
+            payment_amount,
+            price,
+            is_full,
+        };
+
+        // AUTO-SETTLE: Send payment to maker immediately to prevent theft.
+        transfer::public_transfer(payment, offer.maker);
+        let zero_coin = coin::from_balance(balance::zero<WantAsset>(), ctx);
+        (receipt, zero_coin)
+
+
+// ---------- _and_settle wrappers: update to not double-transfer ----------
+//
+// Since payment now auto-settles to maker in the low-level functions,
+// the _and_settle wrappers would transfer a zero coin to maker (harmless
+// but wasteful). Update them to skip the maker transfer:
+
+// FIND in fill_full_and_settle:
+        let (receipt, payment_coin) = fill_full(offer, payment, clock, ctx);
+        let (offer_coin, _fill_amount, _payment_amount, _price, _is_full) = unpack_receipt(receipt, ctx);
+
+        // Settlement: OfferAsset → taker, WantAsset → maker
+        transfer::public_transfer(offer_coin, taker);
+        transfer::public_transfer(payment_coin, maker);
+
+// REPLACE WITH:
+        let (receipt, _zero_payment) = fill_full(offer, payment, clock, ctx);
+        let (offer_coin, _fill_amount, _payment_amount, _price, _is_full) = unpack_receipt(receipt, ctx);
+
+        // Settlement: OfferAsset → taker (payment already sent to maker in fill_full)
+        transfer::public_transfer(offer_coin, taker);
+        // Destroy zero-value payment coin
+        coin::destroy_zero(_zero_payment);
+
+
+// FIND in fill_partial_and_settle:
+        let (receipt, payment_coin) = fill_partial(offer, fill_amount, payment, clock, ctx);
+        let (offer_coin, _fill_amount, _payment_amount, _price, _is_full) = unpack_receipt(receipt, ctx);
+
+        // Settlement: OfferAsset → taker, WantAsset → maker
+        transfer::public_transfer(offer_coin, taker);
+        transfer::public_transfer(payment_coin, maker);
+
+// REPLACE WITH:
+        let (receipt, _zero_payment) = fill_partial(offer, fill_amount, payment, clock, ctx);
+        let (offer_coin, _fill_amount, _payment_amount, _price, _is_full) = unpack_receipt(receipt, ctx);
+
+        // Settlement: OfferAsset → taker (payment already sent to maker in fill_partial)
+        transfer::public_transfer(offer_coin, taker);
+        coin::destroy_zero(_zero_payment);
+
+
+// FIND in fill_partial_gated_and_settle:
+        let (receipt, payment_coin) = fill_partial_gated(offer, fill_amount, payment, partial_cap, clock, ctx);
+        let (offer_coin, _fill_amount, _payment_amount, _price, _is_full) = unpack_receipt(receipt, ctx);
+
+        // Settlement: OfferAsset → taker, WantAsset → maker
+        transfer::public_transfer(offer_coin, taker);
+        transfer::public_transfer(payment_coin, maker);
+
+// REPLACE WITH:
+        let (receipt, _zero_payment) = fill_partial_gated(offer, fill_amount, payment, partial_cap, clock, ctx);
+        let (offer_coin, _fill_amount, _payment_amount, _price, _is_full) = unpack_receipt(receipt, ctx);
+
+        // Settlement: OfferAsset → taker (payment already sent to maker in fill_partial_gated)
+        transfer::public_transfer(offer_coin, taker);
+        coin::destroy_zero(_zero_payment);
+
+
+// ---------- intent.move: update execute_against_offer ----------
+//
+// FIND in execute_against_offer:
+        // Settle manually to ensure assets go to intent creator, not executor
+        let (offer_coin, _, _, _, _) = offer::unpack_receipt(receipt, ctx);
+        transfer::public_transfer(offer_coin, intent.creator);
+        transfer::public_transfer(payment_coin, offer::maker(offer));
+
+// REPLACE WITH:
+        // Settle: OfferAsset → intent creator (payment already sent to maker in fill)
+        let (offer_coin, _, _, _, _) = offer::unpack_receipt(receipt, ctx);
+        transfer::public_transfer(offer_coin, intent.creator);
+        // payment_coin is zero-value after auto-settle; destroy it
+        coin::destroy_zero(payment_coin);
